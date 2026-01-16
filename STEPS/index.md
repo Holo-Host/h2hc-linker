@@ -6,9 +6,13 @@
 
 | Step | Status | Description |
 |------|--------|-------------|
-| M1 | 📋 | Create hc-membrane repository skeleton |
-| M2 | 📋 | Extract core HTTP API layer |
-| M3 | 📋 | Add Kitsune liveness endpoints |
+| M1 | ✅ | Create hc-membrane repository skeleton |
+| M2a | ⏳ | WebSocket + Agent Registration |
+| M2b | 📋 | Signal Forwarding |
+| M2c | 📋 | DHT Read Endpoints |
+| M2d | 📋 | DHT Publish Endpoint |
+| M2e | 📋 | Zome Call Endpoint |
+| M3 | ✅ | Add Kitsune liveness endpoints |
 | M4 | 📋 | Integrate holochain_p2p |
 | M5 | 📋 | Migrate op construction to gateway |
 | M6 | 📋 | Remove conductor dependency |
@@ -21,35 +25,78 @@
 ## Migration Steps (from hc-http-gw-fork)
 
 ### Step M1: Create hc-membrane repository skeleton
-**Status**: 📋 Planned
+**Status**: ✅ Complete
 
-- Initialize new repo with Cargo workspace
-- Copy basic project structure from hc-http-gw-fork
-- Set up CI/CD similar to current setup
+- ✅ Initialized repo with Cargo.toml and workspace structure
+- ✅ Created src/{lib.rs, config.rs, error.rs, router.rs, service.rs}
+- ✅ Set up routes/{mod.rs, health.rs, kitsune.rs}
+- ✅ Added binary at src/bin/hc-membrane.rs
+- ✅ Added all necessary dependencies (kitsune2, holochain_types, etc.)
 - Fishy extension continues using hc-http-gw-fork during transition
-- **Test**: ziptest passes against hc-http-gw-fork
 
-### Step M2: Extract core HTTP API layer
+### Step M2a: WebSocket + Agent Registration
+**Status**: ⏳ In Progress
+**Plan**: [M2a_PLAN.md](./M2a_PLAN.md)
+
+Copy kitsune2 agent registration code from hc-http-gw-fork:
+- WebSocket endpoint at `/ws`
+- AgentProxyManager for connection tracking
+- ProxyAgent (LocalAgent impl with remote signing)
+- GatewayKitsune for space/agent lifecycle
+- **Test**: Registered agent visible in `hc sandbox call agent_info`
+
+### Step M2b: Signal Forwarding
 **Status**: 📋 Planned
 
-- Copy HTTP endpoint handlers to hc-membrane
-- Maintain identical API surface (/hc/*, /dht/*)
-- hc-membrane can be run as drop-in replacement
-- Update Fishy to support configurable gateway URL
-- **Test**: ziptest passes against BOTH gateways
+- ProxySpaceHandler.recv_notify() decodes WireMessage
+- Forward signals to browser via WebSocket
+- **Test**: Remote signal from conductor reaches browser
+
+### Step M2c: DHT Read Endpoints
+**Status**: 📋 Planned
+
+- GET /dht/{dna}/record/{hash}
+- GET /dht/{dna}/links
+- Requires conductor connection for zome calls
+- **Test**: Can fetch records and links
+
+### Step M2d: DHT Publish Endpoint
+**Status**: 📋 Planned
+
+- POST /dht/{dna}/publish
+- TempOpStore for staging ops
+- Op forwarding to DHT authorities
+- **Test**: Published ops appear on network
+
+### Step M2e: Zome Call Endpoint
+**Status**: 📋 Planned
+
+- GET /{dna}/{app}/{zome}/{fn}
+- Conductor admin websocket connection
+- **Test**: ziptest passes against hc-membrane
 
 ### Step M3: Add Kitsune liveness endpoints
-**Status**: 📋 Planned
-**Blocking**: Fishy Step 14 liveness UI
+**Status**: ✅ Complete
+**Enables**: Fishy Step 14 liveness UI (once M2 provides DHT operations)
 
 Kitsune Direct API endpoints for network status:
-- GET /k2/{space}/status - network connection status
-- GET /k2/{space}/peers - list known peers
-- GET /k2/{space}/peer/{agent} - get specific agent info
-- GET /k2/{space}/local-agents - list local agents
-- GET /k2/transport/stats - network transport stats
+- ✅ GET /k2/status - overall network connection status
+- ✅ GET /k2/peers - list all known peers across spaces
+- ✅ GET /k2/space/{space_id}/status - space-specific status
+- ✅ GET /k2/space/{space_id}/peers - list peers in a space
+- ✅ GET /k2/space/{space_id}/local-agents - list local agents in a space
+- ✅ GET /k2/transport/stats - network transport stats
 
-- **Test**: ziptest passes, liveness UI shows data
+Implementation:
+- ✅ Created `kitsune.rs` with `KitsuneBuilder` and `MinimalKitsuneHandler`
+- ✅ Wired Kitsune2 instance to `KitsuneState` in `service.rs`
+- ✅ Endpoints return real data when Kitsune is configured
+
+**Testing (M3 only - liveness endpoints)**:
+- ✅ /health returns ok
+- ✅ /k2/status shows connected=true when bootstrap/signal URLs configured
+- ✅ /k2/transport/stats shows peer_urls when connected
+- ⚠️ Full ziptest requires M2 (DHT endpoints not yet implemented)
 
 ### Step M4: Integrate holochain_p2p
 **Status**: 📋 Planned
