@@ -18,6 +18,7 @@
 
 mod config;
 mod error;
+mod kitsune;
 mod router;
 mod service;
 

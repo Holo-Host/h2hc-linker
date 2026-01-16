@@ -5,7 +5,8 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 use crate::config::Configuration;
-use crate::error::HcMembraneResult;
+use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::kitsune::KitsuneBuilder;
 use crate::router::create_router;
 use crate::routes::kitsune::KitsuneState;
 
@@ -17,19 +18,43 @@ pub struct HcMembraneService {
 
 impl HcMembraneService {
     /// Create a new service with the given configuration
-    pub async fn new(
-        address: IpAddr,
-        port: u16,
-        config: Configuration,
-    ) -> HcMembraneResult<Self> {
+    pub async fn new(address: IpAddr, port: u16, config: Configuration) -> HcMembraneResult<Self> {
         let addr = SocketAddr::new(address, port);
 
-        // Create Kitsune state (placeholder for now - DynKitsune will be wired up later)
+        // Create Kitsune2 instance if configured
+        let kitsune = if config.kitsune_enabled() {
+            tracing::info!("Initializing Kitsune2 instance");
+            let mut builder = KitsuneBuilder::new();
+
+            if let Some(ref bootstrap_url) = config.bootstrap_url {
+                builder = builder.with_bootstrap_url(bootstrap_url);
+            }
+            if let Some(ref signal_url) = config.signal_url {
+                builder = builder.with_signal_url(signal_url);
+            }
+
+            match builder.build().await {
+                Ok(k) => {
+                    tracing::info!("Kitsune2 instance created successfully");
+                    Some(k)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create Kitsune2 instance: {}", e);
+                    return Err(HcMembraneError::Internal(format!(
+                        "Failed to create Kitsune2 instance: {e}"
+                    )));
+                }
+            }
+        } else {
+            tracing::info!("Kitsune2 not configured (no bootstrap/signal URLs)");
+            None
+        };
+
         let kitsune_state = Arc::new(KitsuneState {
             enabled: config.kitsune_enabled(),
             bootstrap_url: config.bootstrap_url.clone(),
             signal_url: config.signal_url.clone(),
-            kitsune: None, // TODO: Wire up to actual Kitsune2 instance
+            kitsune,
         });
 
         Ok(Self {

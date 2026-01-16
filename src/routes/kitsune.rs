@@ -25,12 +25,12 @@ use crate::error::{HcMembraneError, HcMembraneResult};
 fn parse_space_id(space_id_str: &str) -> HcMembraneResult<SpaceId> {
     let bytes = BASE64_URL_SAFE_NO_PAD
         .decode(space_id_str)
-        .map_err(|e| HcMembraneError::InvalidRequest(format!("Invalid space ID: {}", e)))?;
+        .map_err(|e| HcMembraneError::InvalidRequest(format!("Invalid space ID: {e}")))?;
     Ok(SpaceId::from(bytes::Bytes::from(bytes)))
 }
 
 /// State for Kitsune routes - holds the Kitsune2 instance
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct KitsuneState {
     /// Whether Kitsune2 is enabled and connected
     pub enabled: bool,
@@ -40,17 +40,6 @@ pub struct KitsuneState {
     pub signal_url: Option<String>,
     /// The Kitsune2 instance (None if not yet connected)
     pub kitsune: Option<DynKitsune>,
-}
-
-impl Default for KitsuneState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            bootstrap_url: None,
-            signal_url: None,
-            kitsune: None,
-        }
-    }
 }
 
 /// Network status response
@@ -233,8 +222,7 @@ async fn get_space_status(
 
     let Some(space) = kitsune.space_if_exists(space_id).await else {
         return Err(HcMembraneError::NotFound(format!(
-            "Space not found: {}",
-            space_id_str
+            "Space not found: {space_id_str}"
         )));
     };
 
@@ -272,8 +260,7 @@ async fn get_space_peers(
 
     let Some(space) = kitsune.space_if_exists(space_id).await else {
         return Err(HcMembraneError::NotFound(format!(
-            "Space not found: {}",
-            space_id_str
+            "Space not found: {space_id_str}"
         )));
     };
 
@@ -304,8 +291,7 @@ async fn get_local_agents(
 
     let Some(space) = kitsune.space_if_exists(space_id).await else {
         return Err(HcMembraneError::NotFound(format!(
-            "Space not found: {}",
-            space_id_str
+            "Space not found: {space_id_str}"
         )));
     };
 
