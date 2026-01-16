@@ -14,3 +14,5 @@
 # Generated test assets
 *.happ
 *.dna
+.claude
+.hc-sandbox
