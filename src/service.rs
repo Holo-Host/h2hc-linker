@@ -4,16 +4,30 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
+use crate::agent_proxy::AgentProxyManager;
 use crate::config::Configuration;
 use crate::error::{HcMembraneError, HcMembraneResult};
-use crate::kitsune::KitsuneBuilder;
+use crate::gateway_kitsune::{GatewayKitsune, KitsuneProxy, KitsuneProxyBuilder};
 use crate::router::create_router;
 use crate::routes::kitsune::KitsuneState;
+
+/// Application state shared across handlers
+#[derive(Clone)]
+pub struct AppState {
+    /// Configuration
+    pub configuration: Configuration,
+    /// Agent proxy manager for WebSocket connections
+    pub agent_proxy: AgentProxyManager,
+    /// Gateway kitsune manager (if kitsune2 enabled)
+    pub gateway_kitsune: Option<GatewayKitsune>,
+    /// Kitsune state for liveness endpoints
+    pub kitsune_state: Arc<KitsuneState>,
+}
 
 /// The main hc-membrane service
 pub struct HcMembraneService {
     addr: SocketAddr,
-    kitsune_state: Arc<KitsuneState>,
+    app_state: AppState,
 }
 
 impl HcMembraneService {
@@ -21,10 +35,17 @@ impl HcMembraneService {
     pub async fn new(address: IpAddr, port: u16, config: Configuration) -> HcMembraneResult<Self> {
         let addr = SocketAddr::new(address, port);
 
+        // Create agent proxy manager
+        let agent_proxy = AgentProxyManager::new();
+
         // Create Kitsune2 instance if configured
-        let kitsune = if config.kitsune_enabled() {
-            tracing::info!("Initializing Kitsune2 instance");
-            let mut builder = KitsuneBuilder::new();
+        let (kitsune, gateway_kitsune) = if config.kitsune_enabled() {
+            tracing::info!("Initializing Kitsune2 instance with agent registration support");
+
+            // Create KitsuneProxy handler (supports agent registration)
+            let kitsune_proxy = KitsuneProxy::new(agent_proxy.clone());
+
+            let mut builder = KitsuneProxyBuilder::new(kitsune_proxy);
 
             if let Some(ref bootstrap_url) = config.bootstrap_url {
                 builder = builder.with_bootstrap_url(bootstrap_url);
@@ -36,7 +57,8 @@ impl HcMembraneService {
             match builder.build().await {
                 Ok(k) => {
                     tracing::info!("Kitsune2 instance created successfully");
-                    Some(k)
+                    let gw_kitsune = GatewayKitsune::new(k.clone(), agent_proxy.clone());
+                    (Some(k), Some(gw_kitsune))
                 }
                 Err(e) => {
                     tracing::error!("Failed to create Kitsune2 instance: {}", e);
@@ -47,7 +69,7 @@ impl HcMembraneService {
             }
         } else {
             tracing::info!("Kitsune2 not configured (no bootstrap/signal URLs)");
-            None
+            (None, None)
         };
 
         let kitsune_state = Arc::new(KitsuneState {
@@ -57,15 +79,19 @@ impl HcMembraneService {
             kitsune,
         });
 
-        Ok(Self {
-            addr,
+        let app_state = AppState {
+            configuration: config,
+            agent_proxy,
+            gateway_kitsune,
             kitsune_state,
-        })
+        };
+
+        Ok(Self { addr, app_state })
     }
 
     /// Run the service
     pub async fn run(self) -> HcMembraneResult<()> {
-        let router = create_router(self.kitsune_state);
+        let router = create_router(self.app_state);
 
         tracing::info!("Starting hc-membrane on {}", self.addr);
 

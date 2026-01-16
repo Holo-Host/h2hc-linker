@@ -7,7 +7,7 @@
 | Step | Status | Description |
 |------|--------|-------------|
 | M1 | ✅ | Create hc-membrane repository skeleton |
-| M2a | ⏳ | WebSocket + Agent Registration |
+| M2a | ✅ | WebSocket + Agent Registration |
 | M2b | 📋 | Signal Forwarding |
 | M2c | 📋 | DHT Read Endpoints |
 | M2d | 📋 | DHT Publish Endpoint |
@@ -35,15 +35,16 @@
 - Fishy extension continues using hc-http-gw-fork during transition
 
 ### Step M2a: WebSocket + Agent Registration
-**Status**: ⏳ In Progress
-**Plan**: [M2a_PLAN.md](./M2a_PLAN.md)
+**Status**: ✅ Complete
+**Plan**: [M2a_PLAN.md](./M2a_PLAN.md) | **Completion**: [M2a_COMPLETION.md](./M2a_COMPLETION.md)
 
 Copy kitsune2 agent registration code from hc-http-gw-fork:
-- WebSocket endpoint at `/ws`
-- AgentProxyManager for connection tracking
-- ProxyAgent (LocalAgent impl with remote signing)
-- GatewayKitsune for space/agent lifecycle
-- **Test**: Registered agent visible in `hc sandbox call agent_info`
+- ✅ WebSocket endpoint at `/ws`
+- ✅ AgentProxyManager for connection tracking
+- ✅ ProxyAgent (LocalAgent impl with remote signing)
+- ✅ GatewayKitsune for space/agent lifecycle
+- ✅ Test infrastructure (flake.nix, e2e-test-membrane.sh)
+- ✅ **Test**: Registered agents visible in conductor peer store
 
 ### Step M2b: Signal Forwarding
 **Status**: 📋 Planned

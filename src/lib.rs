@@ -16,11 +16,15 @@
 //! - Holochain semantic API (/hc/*): get, get_links, publish, signals
 //! - Kitsune direct API (/k2/*): network status, peer info, liveness
 
+pub(crate) mod agent_proxy;
 mod config;
 mod error;
+pub(crate) mod gateway_kitsune;
 mod kitsune;
+pub(crate) mod proxy_agent;
 mod router;
-mod service;
+pub(crate) mod service;
+pub(crate) mod wire_preflight;
 
 // Routes
 pub mod routes;

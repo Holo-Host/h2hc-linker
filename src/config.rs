@@ -1,6 +1,28 @@
 //! Configuration for hc-membrane
 
 use std::net::SocketAddr;
+use std::time::Duration;
+
+/// WebSocket configuration
+#[derive(Debug, Clone)]
+pub struct WebSocketConfig {
+    /// Interval between heartbeat pings
+    pub heartbeat_interval: Duration,
+    /// Timeout for heartbeat responses
+    pub heartbeat_timeout: Duration,
+    /// Idle timeout for connections
+    pub idle_timeout: Duration,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval: Duration::from_secs(30),
+            heartbeat_timeout: Duration::from_secs(10),
+            idle_timeout: Duration::from_secs(300), // 5 minutes
+        }
+    }
+}
 
 /// Configuration for the Holochain Membrane gateway
 #[derive(Debug, Clone)]
@@ -16,6 +38,9 @@ pub struct Configuration {
 
     /// Maximum payload size in bytes
     pub payload_limit_bytes: usize,
+
+    /// WebSocket configuration
+    pub websocket: WebSocketConfig,
 }
 
 impl Default for Configuration {
@@ -25,6 +50,7 @@ impl Default for Configuration {
             bootstrap_url: None,
             signal_url: None,
             payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
+            websocket: WebSocketConfig::default(),
         }
     }
 }

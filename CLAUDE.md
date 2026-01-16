@@ -111,14 +111,26 @@ Testing is done via the **fishy** browser extension and **ziptest** hApp:
 
 ### Testing hc-membrane Changes
 
-Every step must pass integration tests with fishy + ziptest:
+Testing requirements vary by step:
 
+**M1-M3 (before DHT endpoints)**:
+```bash
+# Build and test unit tests
+cargo build --release && cargo test
+
+# Test liveness endpoints manually
+./target/release/hc-membrane --port 8090 &
+curl http://localhost:8090/health
+curl http://localhost:8090/k2/status
+```
+
+**M2+ (with DHT endpoints)**: Full ziptest integration
 ```bash
 # 1. Build hc-membrane
 cargo build --release
 
-# 2. Run e2e setup (will need modification to use hc-membrane instead of hc-http-gw-fork)
-cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest
+# 2. Run e2e setup with hc-membrane (requires --gateway=membrane flag, added in M2)
+cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
 
 # 3. Load fishy extension in browser, test with ziptest UI
 
@@ -188,6 +200,7 @@ For implementing kitsune2 integration, study these in `../holochain/crates/holoc
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | This file - core rules and quick context |
+| `SESSION.md` | Current step focus and how to resume |
 | `ARCHITECTURE.md` | System architecture diagram |
 | `STEPS/index.md` | Step status registry |
 | `STEPS/X_PLAN.md` | Detailed plan for step X |
@@ -200,9 +213,33 @@ For implementing kitsune2 integration, study these in `../holochain/crates/holoc
 
 ### Starting a New Step
 1. Create `STEPS/X_PLAN.md` with detailed sub-tasks
-2. Update `STEPS/index.md` status
+2. Update `SESSION.md` to show current step
+3. Update `STEPS/index.md` status
 
 ### Completing a Step
 1. Create `STEPS/X_COMPLETION.md` with summary, test results, issues fixed
-2. Update `STEPS/index.md` status
-3. Commit: `docs: Step X complete`
+2. Update `SESSION.md` to next step
+3. Update `STEPS/index.md` status
+4. Commit: `docs: Step X complete`
+
+### How to Resume (SESSION Pattern)
+
+When starting work on a different computer or after a break:
+
+```bash
+# 1. Check current state
+cat SESSION.md
+cat STEPS/index.md
+
+# 2. Read the current step plan
+cat STEPS/<current>_PLAN.md
+
+# 3. Run tests to verify state
+cargo test
+```
+
+The `SESSION.md` file serves as the single source of truth for:
+- What step is currently in progress
+- What was just completed
+- What comes next
+- Quick links to relevant files
