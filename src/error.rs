@@ -26,6 +26,10 @@ pub enum HcMembraneError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// Invalid request
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
@@ -45,6 +49,7 @@ impl IntoResponse for HcMembraneError {
             HcMembraneError::Network(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
             HcMembraneError::Serialization(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HcMembraneError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            HcMembraneError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HcMembraneError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
 

@@ -24,11 +24,12 @@ impl HcMembraneService {
     ) -> HcMembraneResult<Self> {
         let addr = SocketAddr::new(address, port);
 
-        // Create Kitsune state (placeholder for now)
+        // Create Kitsune state (placeholder for now - DynKitsune will be wired up later)
         let kitsune_state = Arc::new(KitsuneState {
             enabled: config.kitsune_enabled(),
             bootstrap_url: config.bootstrap_url.clone(),
             signal_url: config.signal_url.clone(),
+            kitsune: None, // TODO: Wire up to actual Kitsune2 instance
         });
 
         Ok(Self {

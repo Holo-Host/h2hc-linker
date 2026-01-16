@@ -14,13 +14,22 @@ use axum::{
     routing::get,
     Router,
 };
-use kitsune2_api::{AgentId, AgentInfo, DhtArc, SpaceId, TransportStats};
+use base64::prelude::*;
+use kitsune2_api::{AgentId, AgentInfo, ApiTransportStats, DhtArc, DynKitsune, SpaceId};
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::error::HcMembraneResult;
+use crate::error::{HcMembraneError, HcMembraneResult};
 
-/// State for Kitsune routes - will hold actual Kitsune2 instance
+/// Parse a base64-encoded space ID from a URL path parameter
+fn parse_space_id(space_id_str: &str) -> HcMembraneResult<SpaceId> {
+    let bytes = BASE64_URL_SAFE_NO_PAD
+        .decode(space_id_str)
+        .map_err(|e| HcMembraneError::InvalidRequest(format!("Invalid space ID: {}", e)))?;
+    Ok(SpaceId::from(bytes::Bytes::from(bytes)))
+}
+
+/// State for Kitsune routes - holds the Kitsune2 instance
 #[derive(Clone)]
 pub struct KitsuneState {
     /// Whether Kitsune2 is enabled and connected
@@ -29,7 +38,8 @@ pub struct KitsuneState {
     pub bootstrap_url: Option<String>,
     /// Signal server URL if configured
     pub signal_url: Option<String>,
-    // TODO: Add DynKitsune when wiring up to actual instance
+    /// The Kitsune2 instance (None if not yet connected)
+    pub kitsune: Option<DynKitsune>,
 }
 
 impl Default for KitsuneState {
@@ -38,6 +48,7 @@ impl Default for KitsuneState {
             enabled: false,
             bootstrap_url: None,
             signal_url: None,
+            kitsune: None,
         }
     }
 }
@@ -155,76 +166,186 @@ pub fn kitsune_routes() -> Router<Arc<KitsuneState>> {
 async fn get_network_status(
     State(state): State<Arc<KitsuneState>>,
 ) -> HcMembraneResult<Json<NetworkStatus>> {
-    // TODO: Get actual status from Kitsune2 instance
+    let (total_peers, active_spaces) = if let Some(kitsune) = &state.kitsune {
+        let spaces = kitsune.list_spaces();
+        let active_spaces = spaces.len();
+
+        // Aggregate peer count across all spaces
+        let mut total_peers = 0;
+        for space_id in spaces {
+            if let Some(space) = kitsune.space_if_exists(space_id).await {
+                if let Ok(peers) = space.peer_store().get_all().await {
+                    total_peers += peers.len();
+                }
+            }
+        }
+        (total_peers, active_spaces)
+    } else {
+        (0, 0)
+    };
+
     Ok(Json(NetworkStatus {
-        connected: state.enabled,
+        connected: state.enabled && state.kitsune.is_some(),
         bootstrap_url: state.bootstrap_url.clone(),
         signal_url: state.signal_url.clone(),
-        total_peers: 0,
-        active_spaces: 0,
+        total_peers,
+        active_spaces,
     }))
 }
 
 /// GET /k2/peers - Get all known peers across all spaces
 async fn get_all_peers(
-    State(_state): State<Arc<KitsuneState>>,
+    State(state): State<Arc<KitsuneState>>,
 ) -> HcMembraneResult<Json<Vec<PeerInfoResponse>>> {
-    // TODO: Aggregate peers from all spaces using:
-    // kitsune.space(space_id).await?.peer_store().get_all().await?
-    Ok(Json(vec![]))
+    let Some(kitsune) = &state.kitsune else {
+        return Ok(Json(vec![]));
+    };
+
+    let mut all_peers = Vec::new();
+    for space_id in kitsune.list_spaces() {
+        if let Some(space) = kitsune.space_if_exists(space_id).await {
+            if let Ok(peers) = space.peer_store().get_all().await {
+                for peer in peers {
+                    // peer is Arc<AgentInfoSigned>, get_agent_info() returns &AgentInfo
+                    all_peers.push(PeerInfoResponse::from(peer.get_agent_info()));
+                }
+            }
+        }
+    }
+
+    Ok(Json(all_peers))
 }
 
 /// GET /k2/space/{space_id}/status - Get status for a specific space (DNA)
 async fn get_space_status(
-    State(_state): State<Arc<KitsuneState>>,
-    Path(space_id): Path<String>,
+    State(state): State<Arc<KitsuneState>>,
+    Path(space_id_str): Path<String>,
 ) -> HcMembraneResult<Json<SpaceStatusResponse>> {
-    // TODO: Get actual space status using:
-    // let space = kitsune.space(space_id.parse()?).await?;
-    // let peers = space.peer_store().get_all().await?;
-    // let local = space.local_agent_store().get_all().await?;
+    let space_id = parse_space_id(&space_id_str)?;
+
+    let Some(kitsune) = &state.kitsune else {
+        return Ok(Json(SpaceStatusResponse {
+            space_id: space_id_str,
+            local_agents: 0,
+            peer_count: 0,
+        }));
+    };
+
+    let Some(space) = kitsune.space_if_exists(space_id).await else {
+        return Err(HcMembraneError::NotFound(format!(
+            "Space not found: {}",
+            space_id_str
+        )));
+    };
+
+    let peer_count = space
+        .peer_store()
+        .get_all()
+        .await
+        .map(|p| p.len())
+        .unwrap_or(0);
+
+    let local_agents = space
+        .local_agent_store()
+        .get_all()
+        .await
+        .map(|a| a.len())
+        .unwrap_or(0);
+
     Ok(Json(SpaceStatusResponse {
-        space_id,
-        local_agents: 0,
-        peer_count: 0,
+        space_id: space_id_str,
+        local_agents,
+        peer_count,
     }))
 }
 
 /// GET /k2/space/{space_id}/peers - Get peers for a specific space
 async fn get_space_peers(
-    State(_state): State<Arc<KitsuneState>>,
-    Path(_space_id): Path<String>,
+    State(state): State<Arc<KitsuneState>>,
+    Path(space_id_str): Path<String>,
 ) -> HcMembraneResult<Json<Vec<PeerInfoResponse>>> {
-    // TODO: Get peers from space's peer store using:
-    // let space = kitsune.space(space_id.parse()?).await?;
-    // let peers = space.peer_store().get_all().await?;
-    // peers.iter().map(|p| PeerInfoResponse::from(p.as_ref())).collect()
-    Ok(Json(vec![]))
+    let space_id = parse_space_id(&space_id_str)?;
+
+    let Some(kitsune) = &state.kitsune else {
+        return Ok(Json(vec![]));
+    };
+
+    let Some(space) = kitsune.space_if_exists(space_id).await else {
+        return Err(HcMembraneError::NotFound(format!(
+            "Space not found: {}",
+            space_id_str
+        )));
+    };
+
+    let peers = space
+        .peer_store()
+        .get_all()
+        .await
+        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+
+    let responses: Vec<PeerInfoResponse> = peers
+        .iter()
+        .map(|p| PeerInfoResponse::from(p.get_agent_info()))
+        .collect();
+
+    Ok(Json(responses))
 }
 
 /// GET /k2/space/{space_id}/local-agents - Get local agents for a space
 async fn get_local_agents(
-    State(_state): State<Arc<KitsuneState>>,
-    Path(_space_id): Path<String>,
-) -> HcMembraneResult<Json<Vec<String>>> {
-    // TODO: Get local agents from space's local agent store using:
-    // let space = kitsune.space(space_id.parse()?).await?;
-    // let agents = space.local_agent_store().get_all().await?;
-    // agents.iter().map(|a| a.agent().to_string()).collect()
-    Ok(Json(vec![]))
+    State(state): State<Arc<KitsuneState>>,
+    Path(space_id_str): Path<String>,
+) -> HcMembraneResult<Json<Vec<AgentId>>> {
+    let space_id = parse_space_id(&space_id_str)?;
+
+    let Some(kitsune) = &state.kitsune else {
+        return Ok(Json(vec![]));
+    };
+
+    let Some(space) = kitsune.space_if_exists(space_id).await else {
+        return Err(HcMembraneError::NotFound(format!(
+            "Space not found: {}",
+            space_id_str
+        )));
+    };
+
+    let agents = space
+        .local_agent_store()
+        .get_all()
+        .await
+        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+
+    let agent_ids: Vec<AgentId> = agents.iter().map(|a| a.agent().clone()).collect();
+
+    Ok(Json(agent_ids))
 }
 
 /// GET /k2/transport/stats - Get transport statistics
-/// Returns the kitsune2_api::TransportStats directly
+/// Returns the kitsune2_api::ApiTransportStats directly
 async fn get_transport_stats(
-    State(_state): State<Arc<KitsuneState>>,
-) -> HcMembraneResult<Json<TransportStats>> {
-    // TODO: Get actual transport stats using:
-    // kitsune.transport().dump_network_stats().await?
-    // TransportStats is already Serialize from kitsune2_api
-    Ok(Json(TransportStats {
-        backend: "tx5".to_string(),
-        peer_urls: vec![],
-        connections: vec![],
-    }))
+    State(state): State<Arc<KitsuneState>>,
+) -> HcMembraneResult<Json<ApiTransportStats>> {
+    let Some(kitsune) = &state.kitsune else {
+        // Return empty stats if Kitsune not connected
+        return Ok(Json(ApiTransportStats {
+            transport_stats: kitsune2_api::TransportStats {
+                backend: "tx5".to_string(),
+                peer_urls: vec![],
+                connections: vec![],
+            },
+            blocked_message_counts: std::collections::HashMap::new(),
+        }));
+    };
+
+    let transport = kitsune
+        .transport()
+        .await
+        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+
+    let stats = transport
+        .dump_network_stats()
+        .await
+        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+
+    Ok(Json(stats))
 }
