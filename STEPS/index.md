@@ -1,0 +1,150 @@
+# Step Status Registry
+
+> **Purpose**: Single source of truth for step completion status. Update this file when steps are completed.
+
+## Quick Reference
+
+| Step | Status | Description |
+|------|--------|-------------|
+| M1 | 📋 | Create hc-membrane repository skeleton |
+| M2 | 📋 | Extract core HTTP API layer |
+| M3 | 📋 | Add Kitsune liveness endpoints |
+| M4 | 📋 | Integrate holochain_p2p |
+| M5 | 📋 | Migrate op construction to gateway |
+| M6 | 📋 | Remove conductor dependency |
+| M7 | 📋 | Deprecate hc-http-gw-fork |
+
+**Legend**: ✅ Complete | ⏳ In Progress | 📋 Planned | ❌ Blocked
+
+---
+
+## Migration Steps (from hc-http-gw-fork)
+
+### Step M1: Create hc-membrane repository skeleton
+**Status**: 📋 Planned
+
+- Initialize new repo with Cargo workspace
+- Copy basic project structure from hc-http-gw-fork
+- Set up CI/CD similar to current setup
+- Fishy extension continues using hc-http-gw-fork during transition
+- **Test**: ziptest passes against hc-http-gw-fork
+
+### Step M2: Extract core HTTP API layer
+**Status**: 📋 Planned
+
+- Copy HTTP endpoint handlers to hc-membrane
+- Maintain identical API surface (/hc/*, /dht/*)
+- hc-membrane can be run as drop-in replacement
+- Update Fishy to support configurable gateway URL
+- **Test**: ziptest passes against BOTH gateways
+
+### Step M3: Add Kitsune liveness endpoints
+**Status**: 📋 Planned
+**Blocking**: Fishy Step 14 liveness UI
+
+Kitsune Direct API endpoints for network status:
+- GET /k2/{space}/status - network connection status
+- GET /k2/{space}/peers - list known peers
+- GET /k2/{space}/peer/{agent} - get specific agent info
+- GET /k2/{space}/local-agents - list local agents
+- GET /k2/transport/stats - network transport stats
+
+- **Test**: ziptest passes, liveness UI shows data
+
+### Step M4: Integrate holochain_p2p
+**Status**: 📋 Planned
+
+- Add holochain_p2p dependency to hc-membrane
+- Wire get/get_links through holochain_p2p
+- Keep conductor fallback via feature flag
+- **Test**: ziptest passes with both code paths
+
+### Step M5: Migrate op construction to gateway
+**Status**: 📋 Planned
+
+- Add produce_ops_from_record in hc-membrane
+- Update POST /hc/{dna}/publish to accept Record
+- Fishy extension sends Records instead of ops
+- Keep old ops endpoint for backwards compat
+- **Test**: ziptest passes, publishing verified
+
+### Step M6: Remove conductor dependency
+**Status**: 📋 Planned
+
+- Remove dht_util zome routing
+- Remove AppConnPool
+- hc-membrane is standalone Kitsune2 peer
+- **Test**: ziptest passes against hc-membrane only
+
+### Step M7: Deprecate hc-http-gw-fork
+**Status**: 📋 Planned
+
+- Update Fishy to require hc-membrane
+- Archive hc-http-gw-fork repo
+- **Test**: Full integration test suite
+
+---
+
+## Feature Phases (Parallel with Migration)
+
+| Phase | Focus | Risk | Corresponding Steps |
+|-------|-------|------|---------------------|
+| 1 | Kitsune liveness API | Low | M3 |
+| 2 | RPC unification | Low | Future |
+| 3 | holochain_p2p integration | Medium | M4, M5 |
+| 4 | Remove conductor | Medium | M6 |
+| 5 | Optimization | Low | Future |
+
+---
+
+## Testing Strategy
+
+Each migration step must pass integration tests with **fishy browser extension** and **ziptest hApp**.
+
+### Test Levels
+
+1. **Unit tests** - `cargo test` in hc-membrane
+2. **Integration tests** - `../fishy && npm run test:integration`
+3. **E2E tests** - Fishy extension + ziptest full flow
+4. **Regression check** - Compare behavior with previous step
+
+### Test Commands
+
+```bash
+# 1. Build and test hc-membrane
+cd ../hc-membrane && cargo test
+cd ../hc-membrane && cargo build --release
+
+# 2. Run e2e setup (uses hc-http-gw-fork initially, will switch to hc-membrane)
+cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest
+
+# 3. Run fishy integration tests
+cd ../fishy && npm run test:integration
+```
+
+### e2e-test-setup.sh Adaptation Plan
+
+The fishy test script `../fishy/scripts/e2e-test-setup.sh` needs to be updated to support hc-membrane:
+
+- **Step M2**: Add `--gateway=membrane` flag to switch between gateways
+- **Step M6**: Default to hc-membrane
+- **Step M7**: Remove hc-http-gw-fork support
+
+### Test Fixtures
+
+- **ziptest.happ**: `../fishy/fixtures/ziptest.happ`
+- **fixture1.happ**: `../hc-http-gw-fork/fixture/package/happ1/fixture1.happ`
+- **E2E test page**: `../fishy/packages/extension/test/e2e-gateway-test.html`
+
+---
+
+## Documentation Files
+
+| File | Purpose |
+|------|---------|
+| `../CLAUDE.md` | Core rules and quick context |
+| `../ARCHITECTURE.md` | System architecture diagram |
+| `index.md` | This file - step registry |
+| `X_PLAN.md` | Detailed plan for step X |
+| `X_COMPLETION.md` | Completion notes for step X |
+| `GATEWAY_ARCHITECTURE_ANALYSIS.md` | Detailed architecture analysis |

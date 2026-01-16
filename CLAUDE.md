@@ -1,0 +1,208 @@
+# hc-membrane
+
+> Holochain Membrane - Network edge gateway providing DHT access for lightweight clients
+
+## Quick Context (READ FIRST)
+
+**Current Step**: See [STEPS/index.md](./STEPS/index.md) for status registry
+
+**What This Is**: A network edge gateway that allows lightweight clients (browsers, mobile) to interact with the Holochain DHT without running a full conductor. Like a cell membrane, it provides selective access between clients and the DHT network.
+
+**What This Is NOT**: This is not "Holochain Lite" - there is no source chain, no validation, no full node capabilities. Zero-arc only.
+
+---
+
+## Critical Rules
+
+### Strong Typing (MANDATORY)
+
+- **Never use plain `String`** for typed values (hashes, URLs, identifiers) - use proper newtypes
+- **Reuse types from holochain crates** - check these before defining new structs:
+  - `holo_hash`: `AgentPubKey`, `ActionHash`, `EntryHash`, `DnaHash`
+  - `holochain_types`: `DhtOp`, `Action`, `Entry`, `Record`, `SignedAction`
+  - `kitsune2_api`: `AgentInfoSigned`, `SpaceId`, `StoredOp`, `OpId`
+  - `holochain_conductor_api`: API types, app info types
+  - `holochain_p2p`: `WireMessage`, `WireOps`, `HolochainP2pDna` traits
+- **Do not recreate structs** that already exist in dependencies - find and use them
+- Use `#[serde(transparent)]` newtypes for domain-specific wrappers
+
+### Reference Sources (Priority Order)
+
+1. **Kitsune2 patterns**: `../holochain/crates/holochain_p2p/src/` - Holochain's kitsune2 integration
+2. **Holochain types**: `../holochain/crates/holochain_types/src/`
+3. **Hash types**: `../holochain/crates/holo_hash/src/`
+4. **Gateway patterns**: `../hc-http-gw-fork/` - Original HTTP gateway (being superseded)
+5. **Serialization lessons**: `../fishy/LESSONS_LEARNED.md` - msgpack/serialization pitfalls
+
+**Avoid web searches** for implementation details - local repos have authoritative code.
+
+---
+
+## Architecture Overview
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         hc-membrane                                  │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Holochain Semantic API (/hc/*)                               │   │
+│  │  GET  /hc/{dna}/record/{hash}    → get record by hash        │   │
+│  │  GET  /hc/{dna}/links            → get_links(base, type)     │   │
+│  │  POST /hc/{dna}/publish          → publish Record            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ Kitsune Direct API (/k2/*)                                   │   │
+│  │  GET  /k2/{space}/peers          → list known peers          │   │
+│  │  GET  /k2/{space}/status         → network status            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ holochain_p2p (semantic layer) + kitsune2 (network layer)    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────┬──────────────────────────────────┘
+                                   │ Kitsune2 P2P
+                                   ▼
+                  ┌────────────────────────────────┐
+                  │  DHT Authorities / Full Nodes  │
+                  └────────────────────────────────┘
+```
+
+---
+
+## Development Guidelines
+
+### Before Coding
+
+1. Check if the type/struct already exists in holochain crates
+2. Reference `../holochain/crates/holochain_p2p/` for kitsune2 patterns
+3. Write tests before implementation
+
+### Serialization
+
+- Use `holochain_serialized_bytes` for msgpack serialization
+- Hash types are 39 bytes (32 core + 3 type prefix + 4 location)
+- See `../fishy/LESSONS_LEARNED.md` for detailed debugging strategies
+
+### Commit Hygiene
+
+- No claude co-authored messages
+- Run `cargo fmt` and `cargo clippy` before commits
+- Use `nix develop` for consistent dependencies
+
+### Communication Style
+
+- No emotional tags or punctuation
+- Code-related information only
+
+---
+
+## Testing and Integration
+
+### Test Infrastructure
+
+Testing is done via the **fishy** browser extension and **ziptest** hApp:
+
+- **Test scripts**: `../fishy/scripts/e2e-test-setup.sh` - starts conductors and gateway
+- **Test app**: ziptest hApp at `../fishy/fixtures/ziptest.happ`
+- **E2E test page**: `../fishy/packages/extension/test/e2e-gateway-test.html`
+
+### Testing hc-membrane Changes
+
+Every step must pass integration tests with fishy + ziptest:
+
+```bash
+# 1. Build hc-membrane
+cargo build --release
+
+# 2. Run e2e setup (will need modification to use hc-membrane instead of hc-http-gw-fork)
+cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest
+
+# 3. Load fishy extension in browser, test with ziptest UI
+
+# 4. Run fishy integration tests
+cd ../fishy && npm run test:integration
+```
+
+### e2e-test-setup.sh Adaptation
+
+As hc-membrane development progresses, `../fishy/scripts/e2e-test-setup.sh` should be adapted:
+
+1. **M2**: Add `--gateway=membrane` flag to switch between hc-http-gw-fork and hc-membrane
+2. **M6**: Default to hc-membrane, deprecate hc-http-gw-fork path
+3. **M7**: Remove hc-http-gw-fork support entirely
+
+### Test Checkpoints
+
+Each migration step should verify:
+- Gateway starts and responds to `/health`
+- Conductor connects successfully
+- ziptest basic operations work (create entry, get entry, get links)
+- Remote signals work between browser and conductor
+
+---
+
+## Key Dependencies
+
+```toml
+holo_hash = "0.6.0"              # Hash types
+holochain_types = "0.6.0"        # Core Holochain types
+holochain_p2p = "0.6.0"          # P2P/Kitsune semantic layer
+kitsune2_api = "0.3.0"           # Kitsune2 API types
+kitsune2_core = "0.3.0"          # Kitsune2 implementations
+```
+
+---
+
+## Type Lookup Reference
+
+| Need | Crate | Type |
+|------|-------|------|
+| Agent key | `holo_hash` | `AgentPubKey` |
+| Entry hash | `holo_hash` | `EntryHash` |
+| Action hash | `holo_hash` | `ActionHash` |
+| DHT operation | `holochain_types` | `DhtOp` |
+| Signed action | `holochain_types` | `SignedAction` |
+| Agent info | `kitsune2_api` | `AgentInfoSigned` |
+| Space ID | `kitsune2_api` | `SpaceId` |
+| Op storage | `kitsune2_api` | `StoredOp` |
+| Wire messages | `holochain_p2p` | `WireMessage`, `WireOps` |
+
+---
+
+## Kitsune2 Reference Files
+
+For implementing kitsune2 integration, study these in `../holochain/crates/holochain_p2p/src/`:
+
+- `spawn/actor.rs` - Kitsune2 lifecycle management
+- `op_store.rs` - Op storage interface
+- `local_agent.rs` - Agent management
+- `types/wire.rs` - Wire protocol types
+
+---
+
+## Documentation Structure
+
+| File | Purpose |
+|------|---------|
+| `CLAUDE.md` | This file - core rules and quick context |
+| `ARCHITECTURE.md` | System architecture diagram |
+| `STEPS/index.md` | Step status registry |
+| `STEPS/X_PLAN.md` | Detailed plan for step X |
+| `STEPS/X_COMPLETION.md` | Completion notes for step X |
+| `STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md` | Detailed architecture analysis |
+
+---
+
+## Workflow
+
+### Starting a New Step
+1. Create `STEPS/X_PLAN.md` with detailed sub-tasks
+2. Update `STEPS/index.md` status
+
+### Completing a Step
+1. Create `STEPS/X_COMPLETION.md` with summary, test results, issues fixed
+2. Update `STEPS/index.md` status
+3. Commit: `docs: Step X complete`
