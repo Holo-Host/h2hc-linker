@@ -10,7 +10,7 @@
 | M2a | ✅ | WebSocket + Agent Registration |
 | M2b | ✅ | Signal Forwarding |
 | M2c | ✅ | DHT Read Endpoints |
-| M2d | 📋 | DHT Publish Endpoint |
+| M2d | ✅ | DHT Publish Endpoint |
 | M2e | 📋 | Zome Call Endpoint |
 | M3 | ✅ | Add Kitsune liveness endpoints |
 | M4 | 📋 | Integrate holochain_p2p |
@@ -66,11 +66,13 @@ Copy kitsune2 agent registration code from hc-http-gw-fork:
 - ✅ **Test**: 32 unit tests passing
 
 ### Step M2d: DHT Publish Endpoint
-**Status**: 📋 Planned
+**Status**: ✅ Complete
+**Completion**: [M2d_COMPLETION.md](./M2d_COMPLETION.md)
 
-- POST /dht/{dna}/publish
-- Uses same conductor connection infrastructure
-- **Test**: Published records appear on network
+- ✅ POST /dht/{dna_hash}/publish - Publish signed DhtOps
+- ✅ TempOpStore for temporary op storage (60s TTL)
+- ✅ GatewayKitsune.publish_ops() for kitsune2 publishing
+- ✅ **Test**: 37 unit tests passing (5 new publish/op_store tests)
 
 ### Step M2e: Zome Call Endpoint
 **Status**: 📋 Planned

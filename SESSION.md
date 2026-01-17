@@ -1,41 +1,36 @@
 # Current Session
 
 **Last Updated**: 2026-01-17
-**Current Step**: M2d (DHT Write Endpoints)
+**Current Step**: M2e (Zome Call Endpoint)
 
 ---
 
 ## Active Work
 
-### Just Completed: M2c - DHT Read Endpoints
+### Just Completed: M2d - DHT Publish Endpoint
 
-Added DHT read endpoints via conductor's dht_util zome:
-- `GET /dht/{dna_hash}/record/{hash}` - Get record by action/entry hash
-- `GET /dht/{dna_hash}/links` - Get links from base hash
-- Conductor connection module (AdminConn, AppConn)
+Added DHT publish endpoint for browser extension agents to publish to DHT via kitsune2:
+- `POST /dht/{dna_hash}/publish` - Publish signed DhtOps
+- TempOpStore for temporary op storage (60s TTL)
+- GatewayKitsune.publish_ops() for kitsune2 publishing
 
 **Key files created**:
-- `src/conductor/` - Conductor connection module
-- `src/routes/dht.rs` - DHT endpoints
+- `src/temp_op_store.rs` - Temporary OpStore implementation
+- `src/routes/publish.rs` - Publish endpoint
 
-**Configuration**:
-```bash
-export HC_MEMBRANE_ADMIN_WS_URL="127.0.0.1:4444"
-```
+**Tests**: 37 tests passing (5 new)
 
-**Tests**: 32 tests passing
-
-See [STEPS/M2c_COMPLETION.md](./STEPS/M2c_COMPLETION.md)
+See [STEPS/M2d_COMPLETION.md](./STEPS/M2d_COMPLETION.md)
 
 ---
 
-## Next Step: M2d - DHT Write Endpoints
+## Next Step: M2e - Zome Call Endpoint
 
-**Goal**: Add HTTP endpoint for publishing to DHT.
+**Goal**: Add HTTP endpoint for calling zome functions.
 
 **What's needed**:
-1. POST /dht/{dna}/publish - Publish a record
-2. Uses same conductor connection infrastructure
+1. GET /{dna}/{app}/{zome}/{fn} - Call zome function
+2. Uses conductor app websocket connection
 
 ---
 
@@ -48,6 +43,7 @@ See [STEPS/M2c_COMPLETION.md](./STEPS/M2c_COMPLETION.md)
 ## Quick Links
 
 - [Step Registry](./STEPS/index.md) - All step statuses
+- [M2d Completion](./STEPS/M2d_COMPLETION.md) - DHT Publish Endpoint
 - [M2c Completion](./STEPS/M2c_COMPLETION.md) - DHT Read Endpoints
 - [M2b Completion](./STEPS/M2b_COMPLETION.md) - Signal Forwarding
 - [M2a Completion](./STEPS/M2a_COMPLETION.md) - WebSocket + Agent Registration

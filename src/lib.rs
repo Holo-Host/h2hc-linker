@@ -25,6 +25,7 @@ mod kitsune;
 pub(crate) mod proxy_agent;
 mod router;
 pub(crate) mod service;
+pub(crate) mod temp_op_store;
 pub(crate) mod wire_preflight;
 
 // Routes

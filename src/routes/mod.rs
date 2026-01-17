@@ -2,7 +2,7 @@
 //!
 //! ## API Structure
 //!
-//! - `/dht/*` - DHT access endpoints (get record, get links)
+//! - `/dht/*` - DHT access endpoints (get record, get links, publish)
 //! - `/k2/*` - Kitsune direct API (network status, peers, liveness)
 //! - `/ws` - WebSocket for browser extension connections
 //! - `/test/*` - Test endpoints for development
@@ -11,10 +11,12 @@
 pub mod dht;
 pub mod health;
 pub mod kitsune;
+pub mod publish;
 pub mod test_signal;
 pub mod websocket;
 
 pub use dht::{dht_get_links, dht_get_record};
 pub use health::health_check;
 pub use kitsune::kitsune_routes;
+pub use publish::dht_publish;
 pub use test_signal::test_signal;

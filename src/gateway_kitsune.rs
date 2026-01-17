@@ -226,9 +226,11 @@ impl ProxySpaceHandler {
 ///
 /// ```ignore
 /// let proxy = KitsuneProxy::new(agent_proxy_manager);
+/// let (op_store_factory, op_store_handle) = TempOpStoreFactory::create();
 /// let kitsune = KitsuneProxyBuilder::new(proxy)
 ///     .with_bootstrap_url("https://bootstrap.example.com")
 ///     .with_signal_url("wss://signal.example.com")
+///     .with_op_store(op_store_factory)
 ///     .build()
 ///     .await?;
 /// ```
@@ -236,6 +238,7 @@ pub struct KitsuneProxyBuilder {
     handler: Arc<KitsuneProxy>,
     bootstrap_url: Option<String>,
     signal_url: Option<String>,
+    op_store_factory: Option<kitsune2_api::DynOpStoreFactory>,
 }
 
 impl KitsuneProxyBuilder {
@@ -245,6 +248,7 @@ impl KitsuneProxyBuilder {
             handler: Arc::new(handler),
             bootstrap_url: None,
             signal_url: None,
+            op_store_factory: None,
         }
     }
 
@@ -260,13 +264,28 @@ impl KitsuneProxyBuilder {
         self
     }
 
+    /// Set a custom OpStoreFactory (for TempOpStore support).
+    ///
+    /// If not set, the default MemOpStoreFactory will be used.
+    pub fn with_op_store(mut self, factory: kitsune2_api::DynOpStoreFactory) -> Self {
+        self.op_store_factory = Some(factory);
+        self
+    }
+
     /// Build the kitsune2 instance.
     pub async fn build(self) -> Result<DynKitsune, Box<dyn std::error::Error + Send + Sync>> {
         use kitsune2::default_builder;
         use kitsune2_core::factories::config::{CoreBootstrapConfig, CoreBootstrapModConfig};
         use kitsune2_transport_tx5::config::{Tx5TransportConfig, Tx5TransportModConfig};
 
-        let builder = default_builder().with_default_config()?;
+        let mut builder = default_builder();
+
+        // Replace op_store factory if a custom one was provided
+        if let Some(op_store_factory) = self.op_store_factory {
+            builder.op_store = op_store_factory;
+        }
+
+        let builder = builder.with_default_config()?;
 
         // Configure bootstrap server
         if let Some(bootstrap_url) = self.bootstrap_url {
@@ -548,6 +567,129 @@ impl GatewayKitsune {
     pub async fn is_agent_joined(&self, dna_hash: &DnaHash, agent_pubkey: &AgentPubKey) -> bool {
         let key = (dna_hash.clone(), agent_pubkey.clone());
         self.agents.read().await.contains_key(&key)
+    }
+
+    /// Publish ops to DHT authorities near the given basis location.
+    ///
+    /// This finds peers whose arc covers the basis location and sends
+    /// the op IDs to them. Those peers will then fetch the actual op data
+    /// from our TempOpStore.
+    ///
+    /// # Arguments
+    ///
+    /// * `dna_hash` - The DNA hash (proper Holochain type)
+    /// * `op_ids` - The op IDs to publish
+    /// * `basis_loc` - The DHT location to find authorities for (from OpBasis)
+    pub async fn publish_ops(
+        &self,
+        dna_hash: &DnaHash,
+        op_ids: Vec<kitsune2_api::OpId>,
+        basis_loc: u32,
+    ) -> Result<usize, String> {
+        use kitsune2_core::get_responsive_remote_agents_near_location;
+
+        // Get or create the space
+        let space = self.get_or_create_space(dna_hash).await?;
+
+        // Debug: Get all peers in the peer store
+        let all_peers = space
+            .peer_store()
+            .get_all()
+            .await
+            .map_err(|e| format!("Failed to get all peers: {e}"))?;
+        debug!(
+            dna = %dna_hash,
+            peer_count = all_peers.len(),
+            "Peer store contents before publish"
+        );
+        for peer in &all_peers {
+            debug!(
+                agent = ?peer.agent,
+                arc = ?peer.storage_arc,
+                url = ?peer.url,
+                is_tombstone = peer.is_tombstone,
+                "Peer in store"
+            );
+        }
+
+        // Debug: Get local agents
+        let local_agents = space
+            .local_agent_store()
+            .get_all()
+            .await
+            .map_err(|e| format!("Failed to get local agents: {e}"))?;
+        debug!(
+            dna = %dna_hash,
+            local_agent_count = local_agents.len(),
+            "Local agents in space"
+        );
+
+        // Find peers near the basis location
+        let agents = get_responsive_remote_agents_near_location(
+            space.peer_store().clone(),
+            space.local_agent_store().clone(),
+            space.peer_meta_store().clone(),
+            basis_loc,
+            usize::MAX, // No limit on number of peers
+        )
+        .await
+        .map_err(|e| format!("Failed to find peers: {e}"))?;
+
+        debug!(
+            dna = %dna_hash,
+            basis_loc,
+            found_agents = agents.len(),
+            "Found responsive remote agents near location"
+        );
+
+        // Collect unique URLs (filter out tombstones)
+        let urls: std::collections::HashSet<Url> = agents
+            .into_iter()
+            .filter_map(|info| {
+                if info.is_tombstone {
+                    debug!(agent = ?info.agent, "Skipping tombstone agent");
+                    return None;
+                }
+                if info.url.is_none() {
+                    debug!(agent = ?info.agent, "Skipping agent with no URL");
+                    return None;
+                }
+                info.url.clone()
+            })
+            .collect();
+
+        if urls.is_empty() {
+            debug!(
+                dna = %dna_hash,
+                basis_loc,
+                "No peers found to publish to"
+            );
+            return Ok(0);
+        }
+
+        info!(
+            dna = %dna_hash,
+            op_count = op_ids.len(),
+            peer_count = urls.len(),
+            basis_loc,
+            "Publishing ops to peers"
+        );
+
+        // Publish to each peer
+        let mut success_count = 0;
+        for url in urls {
+            match space.publish().publish_ops(op_ids.clone(), url.clone()).await {
+                Ok(()) => {
+                    success_count += 1;
+                    debug!(%url, "Published ops to peer");
+                }
+                Err(e) => {
+                    warn!(%url, %e, "Failed to publish ops to peer");
+                }
+            }
+        }
+
+        Ok(success_count)
     }
 }
 

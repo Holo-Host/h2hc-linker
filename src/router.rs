@@ -4,7 +4,7 @@ use axum::{routing::{get, post}, Router};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::routes::{
-    dht_get_links, dht_get_record, health_check, kitsune_routes, test_signal,
+    dht_get_links, dht_get_record, dht_publish, health_check, kitsune_routes, test_signal,
     websocket::ws_handler,
 };
 use crate::service::AppState;
@@ -24,9 +24,11 @@ pub fn create_router(app_state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         // Test endpoint for signal forwarding (development only)
         .route("/test/signal", post(test_signal))
-        // DHT endpoints (via conductor dht_util zome)
+        // DHT endpoints
         .route("/dht/{dna_hash}/record/{hash}", get(dht_get_record))
         .route("/dht/{dna_hash}/links", get(dht_get_links))
+        // DHT publish endpoint (via kitsune2)
+        .route("/dht/{dna_hash}/publish", post(dht_publish))
         // Kitsune direct API
         .nest(
             "/k2",

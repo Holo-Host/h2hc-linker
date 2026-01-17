@@ -11,6 +11,7 @@ use crate::error::{HcMembraneError, HcMembraneResult};
 use crate::gateway_kitsune::{GatewayKitsune, KitsuneProxy, KitsuneProxyBuilder};
 use crate::router::create_router;
 use crate::routes::kitsune::KitsuneState;
+use crate::temp_op_store::{TempOpStoreFactory, TempOpStoreHandle};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -25,6 +26,8 @@ pub struct AppState {
     pub kitsune_state: Arc<KitsuneState>,
     /// App connection for conductor zome calls (if conductor enabled)
     pub app_conn: Option<AppConn>,
+    /// Temp op store for publishing (if kitsune2 enabled)
+    pub temp_op_store: Option<TempOpStoreHandle>,
 }
 
 /// The main hc-membrane service
@@ -42,13 +45,18 @@ impl HcMembraneService {
         let agent_proxy = AgentProxyManager::new();
 
         // Create Kitsune2 instance if configured
-        let (kitsune, gateway_kitsune) = if config.kitsune_enabled() {
+        let (kitsune, gateway_kitsune, temp_op_store) = if config.kitsune_enabled() {
             tracing::info!("Initializing Kitsune2 instance with agent registration support");
+
+            // Create TempOpStore for publishing
+            let (op_store_factory, op_store_handle) = TempOpStoreFactory::create();
+            op_store_factory.start_cleanup_task();
 
             // Create KitsuneProxy handler (supports agent registration)
             let kitsune_proxy = KitsuneProxy::new(agent_proxy.clone());
 
-            let mut builder = KitsuneProxyBuilder::new(kitsune_proxy);
+            let mut builder = KitsuneProxyBuilder::new(kitsune_proxy)
+                .with_op_store(op_store_factory.into_dyn());
 
             if let Some(ref bootstrap_url) = config.bootstrap_url {
                 builder = builder.with_bootstrap_url(bootstrap_url);
@@ -61,7 +69,7 @@ impl HcMembraneService {
                 Ok(k) => {
                     tracing::info!("Kitsune2 instance created successfully");
                     let gw_kitsune = GatewayKitsune::new(k.clone(), agent_proxy.clone());
-                    (Some(k), Some(gw_kitsune))
+                    (Some(k), Some(gw_kitsune), Some(op_store_handle))
                 }
                 Err(e) => {
                     tracing::error!("Failed to create Kitsune2 instance: {}", e);
@@ -72,7 +80,7 @@ impl HcMembraneService {
             }
         } else {
             tracing::info!("Kitsune2 not configured (no bootstrap/signal URLs)");
-            (None, None)
+            (None, None, None)
         };
 
         let kitsune_state = Arc::new(KitsuneState {
@@ -98,6 +106,7 @@ impl HcMembraneService {
             gateway_kitsune,
             kitsune_state,
             app_conn,
+            temp_op_store,
         };
 
         Ok(Self { addr, app_state })
