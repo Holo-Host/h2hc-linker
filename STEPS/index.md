@@ -11,7 +11,7 @@
 | M2b | ✅ | Signal Forwarding |
 | M2c | ✅ | DHT Read Endpoints |
 | M2d | ✅ | DHT Publish Endpoint |
-| M2e | 📋 | Zome Call Endpoint |
+| M2e | ✅ | Zome Call Endpoint |
 | M3 | ✅ | Add Kitsune liveness endpoints |
 | M4 | 📋 | Integrate holochain_p2p |
 | M5 | 📋 | Migrate op construction to gateway |
@@ -75,11 +75,13 @@ Copy kitsune2 agent registration code from hc-http-gw-fork:
 - ✅ **Test**: 37 unit tests passing (5 new publish/op_store tests)
 
 ### Step M2e: Zome Call Endpoint
-**Status**: 📋 Planned
+**Status**: ✅ Complete
+**Completion**: [M2e_COMPLETION.md](./M2e_COMPLETION.md)
 
-- GET /{dna}/{app}/{zome}/{fn}
-- Conductor admin websocket connection
-- **Test**: ziptest passes against hc-membrane
+- ✅ GET /api/{dna_hash}/{zome_name}/{fn_name} - Call zome function
+- ✅ AppConn.call_zome() for general zome calls
+- ✅ Base64 URL-safe JSON payload encoding
+- ✅ **Test**: 42 unit tests passing (5 new zome call tests)
 
 ### Step M3: Add Kitsune liveness endpoints
 **Status**: ✅ Complete

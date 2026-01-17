@@ -5,7 +5,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::routes::{
     dht_get_links, dht_get_record, dht_publish, health_check, kitsune_routes, test_signal,
-    websocket::ws_handler,
+    websocket::ws_handler, zome_call,
 };
 use crate::service::AppState;
 
@@ -29,6 +29,8 @@ pub fn create_router(app_state: AppState) -> Router {
         .route("/dht/{dna_hash}/links", get(dht_get_links))
         // DHT publish endpoint (via kitsune2)
         .route("/dht/{dna_hash}/publish", post(dht_publish))
+        // Zome call endpoint (via conductor)
+        .route("/api/{dna_hash}/{zome_name}/{fn_name}", get(zome_call))
         // Kitsune direct API
         .nest(
             "/k2",

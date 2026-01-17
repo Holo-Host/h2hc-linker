@@ -53,19 +53,28 @@ impl AppConn {
         fn_name: &str,
         payload: ExternIO,
     ) -> HcMembraneResult<ExternIO> {
+        self.call_zome(dna_hash, "dht_util", fn_name, payload).await
+    }
+
+    /// Make a zome call to any zome.
+    pub async fn call_zome(
+        &self,
+        dna_hash: &DnaHash,
+        zome_name: &str,
+        fn_name: &str,
+        payload: ExternIO,
+    ) -> HcMembraneResult<ExternIO> {
         // Find an app with this DNA
         let (app_info, cell_id) = self.find_app_with_dna(dna_hash).await?;
 
         // Get or create app connection
-        let app_ws = self
-            .get_or_connect(&app_info.installed_app_id)
-            .await?;
+        let app_ws = self.get_or_connect(&app_info.installed_app_id).await?;
 
         // Make the zome call
         let result = app_ws
             .call_zome(
                 ZomeCallTarget::CellId(cell_id),
-                ZomeName::from("dht_util"),
+                ZomeName::from(zome_name),
                 fn_name.into(),
                 payload,
             )
