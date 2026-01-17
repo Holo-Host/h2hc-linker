@@ -2,17 +2,19 @@
 //!
 //! ## API Structure
 //!
-//! - `/hc/*` - Holochain semantic API (get, get_links, publish, etc.)
+//! - `/dht/*` - DHT access endpoints (get record, get links)
 //! - `/k2/*` - Kitsune direct API (network status, peers, liveness)
 //! - `/ws` - WebSocket for browser extension connections
 //! - `/test/*` - Test endpoints for development
 //! - `/health` - Health check endpoint
 
+pub mod dht;
 pub mod health;
 pub mod kitsune;
 pub mod test_signal;
 pub mod websocket;
 
+pub use dht::{dht_get_links, dht_get_record};
 pub use health::health_check;
 pub use kitsune::kitsune_routes;
 pub use test_signal::test_signal;

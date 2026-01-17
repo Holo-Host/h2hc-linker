@@ -18,6 +18,7 @@
 
 pub(crate) mod agent_proxy;
 mod config;
+pub mod conductor;
 mod error;
 pub(crate) mod gateway_kitsune;
 mod kitsune;

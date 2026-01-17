@@ -3,6 +3,9 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+/// Default timeout for zome calls
+pub const DEFAULT_ZOME_CALL_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// WebSocket configuration
 #[derive(Debug, Clone)]
 pub struct WebSocketConfig {
@@ -41,6 +44,9 @@ pub struct Configuration {
 
     /// WebSocket configuration
     pub websocket: WebSocketConfig,
+
+    /// Timeout for zome calls
+    pub zome_call_timeout: Duration,
 }
 
 impl Default for Configuration {
@@ -51,6 +57,7 @@ impl Default for Configuration {
             signal_url: None,
             payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
             websocket: WebSocketConfig::default(),
+            zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
         }
     }
 }
@@ -78,11 +85,21 @@ impl Configuration {
             config.payload_limit_bytes = limit.parse()?;
         }
 
+        // Zome call timeout
+        if let Ok(timeout) = std::env::var("HC_MEMBRANE_ZOME_CALL_TIMEOUT_MS") {
+            config.zome_call_timeout = Duration::from_millis(timeout.parse()?);
+        }
+
         Ok(config)
     }
 
     /// Check if Kitsune2 is configured
     pub fn kitsune_enabled(&self) -> bool {
         self.bootstrap_url.is_some() && self.signal_url.is_some()
+    }
+
+    /// Check if conductor integration is configured
+    pub fn conductor_enabled(&self) -> bool {
+        self.admin_socket_addr.is_some()
     }
 }

@@ -2,6 +2,7 @@
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use holochain_client::ConductorApiError;
 use serde::Serialize;
 
 /// Result type for hc-membrane operations
@@ -33,6 +34,22 @@ pub enum HcMembraneError {
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Conductor/Holochain error
+    #[error("Holochain error: {0}")]
+    HolochainError(#[from] ConductorApiError),
+
+    /// Upstream (conductor) unavailable
+    #[error("Upstream unavailable")]
+    UpstreamUnavailable,
+
+    /// Authentication failed
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
+
+    /// Malformed request
+    #[error("Request malformed: {0}")]
+    RequestMalformed(String),
 }
 
 /// JSON error response
@@ -51,6 +68,14 @@ impl IntoResponse for HcMembraneError {
             HcMembraneError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             HcMembraneError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             HcMembraneError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            HcMembraneError::HolochainError(e) => {
+                (StatusCode::BAD_GATEWAY, format!("Holochain error: {e}"))
+            }
+            HcMembraneError::UpstreamUnavailable => {
+                (StatusCode::SERVICE_UNAVAILABLE, "Upstream unavailable".to_string())
+            }
+            HcMembraneError::AuthenticationFailed(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            HcMembraneError::RequestMalformed(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         };
 
         let body = serde_json::to_string(&ErrorResponse {

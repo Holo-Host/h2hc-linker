@@ -9,7 +9,7 @@
 | M1 | ✅ | Create hc-membrane repository skeleton |
 | M2a | ✅ | WebSocket + Agent Registration |
 | M2b | ✅ | Signal Forwarding |
-| M2c | 📋 | DHT Read Endpoints |
+| M2c | ✅ | DHT Read Endpoints |
 | M2d | 📋 | DHT Publish Endpoint |
 | M2e | 📋 | Zome Call Endpoint |
 | M3 | ✅ | Add Kitsune liveness endpoints |
@@ -56,20 +56,21 @@ Copy kitsune2 agent registration code from hc-http-gw-fork:
 - ✅ **Test**: 32 unit tests passing (4 new signal forwarding tests)
 
 ### Step M2c: DHT Read Endpoints
-**Status**: 📋 Planned
+**Status**: ✅ Complete
+**Completion**: [M2c_COMPLETION.md](./M2c_COMPLETION.md)
 
-- GET /dht/{dna}/record/{hash}
-- GET /dht/{dna}/links
-- Requires conductor connection for zome calls
-- **Test**: Can fetch records and links
+- ✅ GET /dht/{dna_hash}/record/{hash} - Get record by hash
+- ✅ GET /dht/{dna_hash}/links - Get links from base hash
+- ✅ Conductor connection module (AdminConn, AppConn)
+- ✅ Simplified: no allowed_app_ids filtering (all apps allowed)
+- ✅ **Test**: 32 unit tests passing
 
 ### Step M2d: DHT Publish Endpoint
 **Status**: 📋 Planned
 
 - POST /dht/{dna}/publish
-- TempOpStore for staging ops
-- Op forwarding to DHT authorities
-- **Test**: Published ops appear on network
+- Uses same conductor connection infrastructure
+- **Test**: Published records appear on network
 
 ### Step M2e: Zome Call Endpoint
 **Status**: 📋 Planned

@@ -3,7 +3,10 @@
 use axum::{routing::{get, post}, Router};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::routes::{health_check, kitsune_routes, test_signal, websocket::ws_handler};
+use crate::routes::{
+    dht_get_links, dht_get_record, health_check, kitsune_routes, test_signal,
+    websocket::ws_handler,
+};
 use crate::service::AppState;
 
 /// Create the main router for hc-membrane
@@ -21,12 +24,14 @@ pub fn create_router(app_state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         // Test endpoint for signal forwarding (development only)
         .route("/test/signal", post(test_signal))
+        // DHT endpoints (via conductor dht_util zome)
+        .route("/dht/{dna_hash}/record/{hash}", get(dht_get_record))
+        .route("/dht/{dna_hash}/links", get(dht_get_links))
         // Kitsune direct API
         .nest(
             "/k2",
             kitsune_routes().with_state(app_state.kitsune_state.clone()),
         )
-        // TODO: Holochain semantic API (/hc/*) will be added in M2c-M2e
         .with_state(app_state)
         .layer(cors)
 }

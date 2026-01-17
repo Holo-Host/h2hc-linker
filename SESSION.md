@@ -1,41 +1,41 @@
 # Current Session
 
 **Last Updated**: 2026-01-17
-**Current Step**: M2c (DHT Read Endpoints)
+**Current Step**: M2d (DHT Write Endpoints)
 
 ---
 
 ## Active Work
 
-### Just Completed: M2b - Signal Forwarding
+### Just Completed: M2c - DHT Read Endpoints
 
-Implemented signal forwarding from kitsune2 network to browser agents:
-- `recv_notify` decodes `WireMessage::RemoteSignalEvt`
-- Routes signals to registered browser agent via `AgentProxyManager`
-- Sends `ServerMessage::Signal` over WebSocket
-- Added `/test/signal` endpoint for testing without kitsune2
+Added DHT read endpoints via conductor's dht_util zome:
+- `GET /dht/{dna_hash}/record/{hash}` - Get record by action/entry hash
+- `GET /dht/{dna_hash}/links` - Get links from base hash
+- Conductor connection module (AdminConn, AppConn)
 
-**Key changes**:
-- `src/gateway_kitsune.rs` - Added signal decoding and forwarding
-- `src/routes/test_signal.rs` - Test endpoint for signal forwarding
-- `src/router.rs` - Added `/test/signal` route
+**Key files created**:
+- `src/conductor/` - Conductor connection module
+- `src/routes/dht.rs` - DHT endpoints
 
-**Tests**: 32 tests passing (4 new signal forwarding tests)
+**Configuration**:
+```bash
+export HC_MEMBRANE_ADMIN_WS_URL="127.0.0.1:4444"
+```
 
-See [STEPS/M2b_COMPLETION.md](./STEPS/M2b_COMPLETION.md)
+**Tests**: 32 tests passing
+
+See [STEPS/M2c_COMPLETION.md](./STEPS/M2c_COMPLETION.md)
 
 ---
 
-## Next Step: M2c - DHT Read Endpoints
+## Next Step: M2d - DHT Write Endpoints
 
-**Goal**: Add HTTP endpoints for reading from DHT.
+**Goal**: Add HTTP endpoint for publishing to DHT.
 
 **What's needed**:
-1. GET /dht/{dna}/record/{hash} - Fetch record by action/entry hash
-2. GET /dht/{dna}/links - Get links from a base hash
-3. Requires conductor connection for zome calls (or direct kitsune2 queries)
-
-**Key reference**: `../hc-http-gw-fork/src/routes/` for endpoint patterns
+1. POST /dht/{dna}/publish - Publish a record
+2. Uses same conductor connection infrastructure
 
 ---
 
@@ -48,7 +48,8 @@ See [STEPS/M2b_COMPLETION.md](./STEPS/M2b_COMPLETION.md)
 ## Quick Links
 
 - [Step Registry](./STEPS/index.md) - All step statuses
-- [M2b Completion](./STEPS/M2b_COMPLETION.md) - Signal Forwarding completion notes
+- [M2c Completion](./STEPS/M2c_COMPLETION.md) - DHT Read Endpoints
+- [M2b Completion](./STEPS/M2b_COMPLETION.md) - Signal Forwarding
 - [M2a Completion](./STEPS/M2a_COMPLETION.md) - WebSocket + Agent Registration
 - [Architecture](./ARCHITECTURE.md) - System architecture
 

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 use crate::agent_proxy::AgentProxyManager;
+use crate::conductor::{AdminConn, AppConn};
 use crate::config::Configuration;
 use crate::error::{HcMembraneError, HcMembraneResult};
 use crate::gateway_kitsune::{GatewayKitsune, KitsuneProxy, KitsuneProxyBuilder};
@@ -22,6 +23,8 @@ pub struct AppState {
     pub gateway_kitsune: Option<GatewayKitsune>,
     /// Kitsune state for liveness endpoints
     pub kitsune_state: Arc<KitsuneState>,
+    /// App connection for conductor zome calls (if conductor enabled)
+    pub app_conn: Option<AppConn>,
 }
 
 /// The main hc-membrane service
@@ -79,11 +82,22 @@ impl HcMembraneService {
             kitsune,
         });
 
+        // Create conductor connection if configured
+        let app_conn = if let Some(admin_addr) = config.admin_socket_addr {
+            tracing::info!("Initializing conductor connection to {}", admin_addr);
+            let admin_conn = AdminConn::new(admin_addr);
+            Some(AppConn::new(admin_conn, admin_addr, config.zome_call_timeout))
+        } else {
+            tracing::info!("Conductor not configured (no admin WebSocket URL)");
+            None
+        };
+
         let app_state = AppState {
             configuration: config,
             agent_proxy,
             gateway_kitsune,
             kitsune_state,
+            app_conn,
         };
 
         Ok(Self { addr, app_state })
