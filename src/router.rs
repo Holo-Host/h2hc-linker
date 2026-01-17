@@ -1,9 +1,9 @@
 //! Router configuration for hc-membrane
 
-use axum::{routing::get, Router};
+use axum::{routing::{get, post}, Router};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::routes::{health_check, kitsune_routes, websocket::ws_handler};
+use crate::routes::{health_check, kitsune_routes, test_signal, websocket::ws_handler};
 use crate::service::AppState;
 
 /// Create the main router for hc-membrane
@@ -19,6 +19,8 @@ pub fn create_router(app_state: AppState) -> Router {
         .route("/health", get(health_check))
         // WebSocket for browser extension connections
         .route("/ws", get(ws_handler))
+        // Test endpoint for signal forwarding (development only)
+        .route("/test/signal", post(test_signal))
         // Kitsune direct API
         .nest(
             "/k2",

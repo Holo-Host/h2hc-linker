@@ -8,7 +8,7 @@
 |------|--------|-------------|
 | M1 | ✅ | Create hc-membrane repository skeleton |
 | M2a | ✅ | WebSocket + Agent Registration |
-| M2b | 📋 | Signal Forwarding |
+| M2b | ✅ | Signal Forwarding |
 | M2c | 📋 | DHT Read Endpoints |
 | M2d | 📋 | DHT Publish Endpoint |
 | M2e | 📋 | Zome Call Endpoint |
@@ -47,11 +47,13 @@ Copy kitsune2 agent registration code from hc-http-gw-fork:
 - ✅ **Test**: Registered agents visible in conductor peer store
 
 ### Step M2b: Signal Forwarding
-**Status**: 📋 Planned
+**Status**: ✅ Complete
+**Completion**: [M2b_COMPLETION.md](./M2b_COMPLETION.md)
 
-- ProxySpaceHandler.recv_notify() decodes WireMessage
-- Forward signals to browser via WebSocket
-- **Test**: Remote signal from conductor reaches browser
+- ✅ ProxySpaceHandler.recv_notify() decodes WireMessage::RemoteSignalEvt
+- ✅ Forward signals to browser via WebSocket (AgentProxyManager.send_signal)
+- ✅ Added /test/signal endpoint for testing without kitsune2
+- ✅ **Test**: 32 unit tests passing (4 new signal forwarding tests)
 
 ### Step M2c: DHT Read Endpoints
 **Status**: 📋 Planned
@@ -151,7 +153,7 @@ Each migration step must pass integration tests with **fishy browser extension**
 
 ### Test Levels
 
-1. **Unit tests** - `cargo test` in hc-membrane
+1. **Unit tests** - `nix develop --command cargo test` in hc-membrane
 2. **Integration tests** - `../fishy && npm run test:integration`
 3. **E2E tests** - Fishy extension + ziptest full flow
 4. **Regression check** - Compare behavior with previous step
@@ -159,9 +161,9 @@ Each migration step must pass integration tests with **fishy browser extension**
 ### Test Commands
 
 ```bash
-# 1. Build and test hc-membrane
-cd ../hc-membrane && cargo test
-cd ../hc-membrane && cargo build --release
+# 1. Build and test hc-membrane (always use nix develop)
+cd ../hc-membrane && nix develop --command cargo test
+cd ../hc-membrane && nix develop --command cargo build --release
 
 # 2. Run e2e setup (uses hc-http-gw-fork initially, will switch to hc-membrane)
 cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest

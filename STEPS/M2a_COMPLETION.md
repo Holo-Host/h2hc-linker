@@ -82,13 +82,10 @@ test result: ok. 28 passed
 4. Verified in conductor:
    - `hc sandbox call list-agents` shows gateway-registered agents
    - Agents have gateway URL (different from conductor URL)
-   - Note: `agent_pub_key` shows null for external agents (expected)
 
 ## Known Limitations
 
-1. **Agent refresh requires active WebSocket**: Kitsune2 refreshes agent info every ~30 seconds. If browser disconnects, refresh signing fails and agent is removed from space.
-
-2. **No signal forwarding yet**: `recv_notify` logs signals but doesn't forward to browser (M2b).
+1. **Agent refresh requires active WebSocket**: Kitsune2 refreshes agent info every ~30 seconds. If browser disconnects, refresh signing fails and agent is removed from space. This is expected behavior - agents come and go.
 
 ## Next Step
 

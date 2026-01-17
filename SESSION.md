@@ -1,60 +1,55 @@
 # Current Session
 
-**Last Updated**: 2026-01-16
-**Current Step**: M2b (Signal Forwarding)
+**Last Updated**: 2026-01-17
+**Current Step**: M2c (DHT Read Endpoints)
 
 ---
 
 ## Active Work
 
-### Just Completed: M2a - WebSocket + Agent Registration
+### Just Completed: M2b - Signal Forwarding
 
-Implemented WebSocket endpoint and kitsune2 agent registration:
-- Browser agents connect via `/ws` WebSocket
-- Remote signing protocol for agent info signatures
-- Agents join kitsune2 space and broadcast to network
-- Verified: agents appear in conductor's peer store
+Implemented signal forwarding from kitsune2 network to browser agents:
+- `recv_notify` decodes `WireMessage::RemoteSignalEvt`
+- Routes signals to registered browser agent via `AgentProxyManager`
+- Sends `ServerMessage::Signal` over WebSocket
+- Added `/test/signal` endpoint for testing without kitsune2
 
-**Key files created**:
-- `src/agent_proxy.rs` - WebSocket connection tracking
-- `src/proxy_agent.rs` - LocalAgent impl with remote signing
-- `src/gateway_kitsune.rs` - KitsuneProxy and GatewayKitsune
-- `src/routes/websocket.rs` - WebSocket message handling
-- `src/wire_preflight.rs` - Preflight message format
+**Key changes**:
+- `src/gateway_kitsune.rs` - Added signal decoding and forwarding
+- `src/routes/test_signal.rs` - Test endpoint for signal forwarding
+- `src/router.rs` - Added `/test/signal` route
 
-**Test infrastructure**:
-- `flake.nix` - Nix dev environment with holochain tools
-- `scripts/e2e-test-membrane.sh` - Start/stop test services
+**Tests**: 32 tests passing (4 new signal forwarding tests)
 
-See [STEPS/M2a_COMPLETION.md](./STEPS/M2a_COMPLETION.md)
+See [STEPS/M2b_COMPLETION.md](./STEPS/M2b_COMPLETION.md)
 
 ---
 
-## Next Step: M2b - Signal Forwarding
+## Next Step: M2c - DHT Read Endpoints
 
-**Goal**: Forward signals from holochain network to browser agents.
+**Goal**: Add HTTP endpoints for reading from DHT.
 
 **What's needed**:
-1. Decode `WireMessage::Signal` in `ProxySpaceHandler::recv_notify`
-2. Route signals to correct browser agent via `AgentProxyManager`
-3. Send `ServerMessage::Signal` over WebSocket
+1. GET /dht/{dna}/record/{hash} - Fetch record by action/entry hash
+2. GET /dht/{dna}/links - Get links from a base hash
+3. Requires conductor connection for zome calls (or direct kitsune2 queries)
 
-**Key reference**: `../hc-http-gw-fork/src/kitsune_proxy.rs` lines 140-200
+**Key reference**: `../hc-http-gw-fork/src/routes/` for endpoint patterns
 
 ---
 
 ## Known Issues
 
-1. **Agent refresh signing**: When browser disconnects, kitsune2's periodic agent info refresh (every ~30s) fails because remote signing requires active WebSocket. Agents are removed from space until browser reconnects.
-
-2. **list-agents shows null agent_pub_key**: This is expected - conductor can't map external agents' AgentId back to AgentPubKey. The agents ARE visible in the peer store (shown by gateway URL).
+1. **Agent refresh signing**: When browser disconnects, kitsune2's periodic agent info refresh (every ~30s) fails because remote signing requires active WebSocket. Agents are removed from space until browser reconnects. (This is expected behavior - agents come and go.)
 
 ---
 
 ## Quick Links
 
 - [Step Registry](./STEPS/index.md) - All step statuses
-- [M2a Plan](./STEPS/M2a_PLAN.md) - WebSocket + Agent Registration plan
+- [M2b Completion](./STEPS/M2b_COMPLETION.md) - Signal Forwarding completion notes
+- [M2a Completion](./STEPS/M2a_COMPLETION.md) - WebSocket + Agent Registration
 - [Architecture](./ARCHITECTURE.md) - System architecture
 
 ---

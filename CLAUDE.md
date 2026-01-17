@@ -74,6 +74,21 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
 
 ## Development Guidelines
 
+### Build Environment (MANDATORY)
+
+**Always use `nix develop` for all cargo commands.** The project has native dependencies (libdatachannel, etc.) that require the nix environment.
+
+```bash
+# Correct - always prefix with nix develop
+nix develop --command cargo build
+nix develop --command cargo test
+nix develop --command cargo run
+
+# Or enter the shell first
+nix develop
+cargo build && cargo test
+```
+
 ### Before Coding
 
 1. Check if the type/struct already exists in holochain crates
@@ -90,7 +105,6 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
 
 - No claude co-authored messages
 - Run `cargo fmt` and `cargo clippy` before commits
-- Use `nix develop` for consistent dependencies
 
 ### Communication Style
 
@@ -115,19 +129,20 @@ Testing requirements vary by step:
 
 **M1-M3 (before DHT endpoints)**:
 ```bash
-# Build and test unit tests
-cargo build --release && cargo test
+# Build and test unit tests (always use nix develop)
+nix develop --command cargo build --release
+nix develop --command cargo test
 
 # Test liveness endpoints manually
-./target/release/hc-membrane --port 8090 &
+nix develop --command cargo run -- --port 8090 &
 curl http://localhost:8090/health
 curl http://localhost:8090/k2/status
 ```
 
 **M2+ (with DHT endpoints)**: Full ziptest integration
 ```bash
-# 1. Build hc-membrane
-cargo build --release
+# 1. Build hc-membrane (always use nix develop)
+nix develop --command cargo build --release
 
 # 2. Run e2e setup with hc-membrane (requires --gateway=membrane flag, added in M2)
 cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
