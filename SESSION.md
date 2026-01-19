@@ -7,25 +7,21 @@
 
 ## Active Work
 
-### Just Completed: M2e - Zome Call Endpoint
+### Just Completed: M2 Series Testing with ziptest
 
-Added zome call endpoint for executing zome functions via conductor:
-- `GET /api/{dna_hash}/{zome_name}/{fn_name}` - Call zome function
-- Base64 URL-safe JSON payload encoding
-- AppConn.call_zome() for general zome calls
+Successfully tested all M2 endpoints with ziptest hApp:
+- `create_thing` - Created entry successfully
+- `get_things` - Retrieved links to created entries
 
-**Key files created**:
-- `src/routes/zome_call.rs` - Zome call endpoint
-
-**Tests**: 42 tests passing (5 new)
-
-See [STEPS/M2e_COMPLETION.md](./STEPS/M2e_COMPLETION.md)
+**Infrastructure added**:
+- Added `--gateway=membrane` option to `../fishy/scripts/e2e-test-setup.sh`
+- Committed to fishy repo: `f2ac5a7 feat: add --gateway option to e2e-test-setup.sh`
 
 ---
 
 ## M2 Series Complete
 
-All M2 endpoints are now implemented:
+All M2 endpoints implemented and tested:
 - M2a: WebSocket + Agent Registration
 - M2b: Signal Forwarding
 - M2c: DHT Read Endpoints (via conductor dht_util)
@@ -34,26 +30,11 @@ All M2 endpoints are now implemented:
 
 ---
 
-## Next Step: Test with ziptest
+## Next Step: M4 (Integrate holochain_p2p)
 
-**Goal**: Verify M2 endpoints work with fishy extension and ziptest hApp.
+**Goal**: Replace conductor-based DHT reads with holochain_p2p layer.
 
-**Testing**:
-```bash
-# 1. Build hc-membrane
-nix develop --command cargo build --release
-
-# 2. Run e2e setup with hc-membrane
-cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
-
-# 3. Load fishy extension, test with ziptest UI
-# Gateway URL: http://localhost:8090
-
-# 4. Run fishy integration tests
-cd ../fishy && npm run test:integration
-```
-
-After ziptest passes, proceed to M4 (Integrate holochain_p2p).
+**Why**: Currently hc-membrane uses the conductor's dht_util zome for get/get_links. M4 integrates holochain_p2p directly so hc-membrane can query the DHT without conductor involvement.
 
 ---
 
@@ -61,6 +42,7 @@ After ziptest passes, proceed to M4 (Integrate holochain_p2p).
 
 1. **Agent refresh signing**: When browser disconnects, kitsune2's periodic agent info refresh (every ~30s) fails because remote signing requires active WebSocket. Agents are removed from space until browser reconnects. (This is expected behavior - agents come and go.)
 
+2. **MANUAL TESTING FAILS** currently hc-membrane doesn't actually work for getting entries from the network.  Looking into why isn't yielding much fruit as it looks like the two code bases (hc-http-gw-forked) are very similar.
 ---
 
 ## Quick Links
