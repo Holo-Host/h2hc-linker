@@ -569,6 +569,109 @@ impl GatewayKitsune {
         self.agents.read().await.contains_key(&key)
     }
 
+    /// Send remote signals to target agents.
+    ///
+    /// For each signal:
+    /// 1. Check if target is a registered browser agent (deliver directly via WebSocket)
+    /// 2. Otherwise, look up target agent's URL from peer_store
+    /// 3. Create WireMessage::remote_signal_evt
+    /// 4. Send via space.send_notify()
+    ///
+    /// Returns (success_count, fail_count).
+    pub async fn send_remote_signals(
+        &self,
+        dna_hash: &DnaHash,
+        signals: Vec<crate::routes::websocket::SignedRemoteSignalInput>,
+    ) -> (usize, usize) {
+        use holochain_types::prelude::Signature;
+        use kitsune2_api::AgentId;
+
+        let mut success_count = 0;
+        let mut fail_count = 0;
+
+        for signal in signals {
+            // Parse target agent from 39-byte HoloHash
+            let target_agent = match AgentPubKey::try_from_raw_39(signal.target_agent.clone()) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!(?e, "Invalid target agent in send_remote_signal");
+                    fail_count += 1;
+                    continue;
+                }
+            };
+
+            // First, check if target is a registered browser agent
+            // If so, deliver directly via WebSocket (much faster than kitsune2)
+            if self.agent_proxy.is_registered(dna_hash, &target_agent).await {
+                // Create signal payload for browser delivery
+                let signal_data = signal_to_b64(&ExternIO(signal.zome_call_params.clone()));
+                let server_msg = ServerMessage::Signal {
+                    dna_hash: dna_hash.to_string(),
+                    to_agent: target_agent.to_string(),
+                    from_agent: "remote".to_string(),
+                    zome_name: "recv_remote_signal".to_string(),
+                    signal: signal_data,
+                };
+
+                if self.agent_proxy.send_signal(dna_hash, &target_agent, server_msg).await {
+                    debug!(%target_agent, "Delivered signal to browser agent via WebSocket");
+                    success_count += 1;
+                } else {
+                    warn!(%target_agent, "Failed to deliver signal to registered browser agent");
+                    fail_count += 1;
+                }
+                continue;
+            }
+
+            // Target is not a browser agent - try kitsune2 peer store
+            let space = match self.get_or_create_space(dna_hash).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(%e, "Failed to get space for remote signal");
+                    fail_count += 1;
+                    continue;
+                }
+            };
+
+            // Look up peer URL from peer store
+            let agent_id = AgentId::from(Bytes::copy_from_slice(target_agent.get_raw_32()));
+            let to_url = match space.peer_store().get(agent_id).await {
+                Ok(Some(info)) if info.url.is_some() => info.url.clone().unwrap(),
+                _ => {
+                    debug!(%target_agent, "Target agent not found in peer store or browser registrations");
+                    fail_count += 1;
+                    continue;
+                }
+            };
+
+            // Create wire message
+            let extern_io = ExternIO(signal.zome_call_params);
+            let signature = Signature::try_from(signal.signature.as_slice())
+                .unwrap_or_else(|_| Signature::from([0u8; 64]));
+            let wire_msg = WireMessage::remote_signal_evt(target_agent.clone(), extern_io, signature);
+
+            // Encode and send
+            let encoded = match WireMessage::encode_batch(&[&wire_msg]) {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!(?e, "Failed to encode wire message");
+                    fail_count += 1;
+                    continue;
+                }
+            };
+
+            if let Err(e) = space.send_notify(to_url.clone(), encoded).await {
+                warn!(?e, %to_url, "Failed to send remote signal");
+                fail_count += 1;
+            } else {
+                debug!(%target_agent, %to_url, "Sent remote signal via kitsune2");
+                success_count += 1;
+            }
+        }
+
+        (success_count, fail_count)
+    }
+
     /// Publish ops to DHT authorities near the given basis location.
     ///
     /// This finds peers whose arc covers the basis location and sends
