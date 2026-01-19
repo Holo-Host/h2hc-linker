@@ -1,13 +1,27 @@
 # Current Session
 
-**Last Updated**: 2026-01-17
+**Last Updated**: 2026-01-19
 **Current Step**: M4 (Integrate holochain_p2p)
 
 ---
 
 ## Active Work
 
-### Just Completed: M2 Series Testing with ziptest
+### Just Completed: Fixed ziptest "WS: Disconnected" display issue
+
+**Problem**: ziptest UI showed "WS: Disconnected" while extension debug panel showed "WS: Connected"
+
+**Root Cause**: Fishy extension bug - `connectionStatus.wsHealthy` in background wasn't being synced with actual WebSocket state from offscreen document. The extension popup queries offscreen directly (correct), but ziptest uses `window.holochain.getConnectionStatus()` which queries the background's stale `connectionStatus.wsHealthy`.
+
+**Fix Applied** (in `../fishy/packages/extension/src/background/index.ts`):
+1. Added `syncWebSocketStateFromOffscreen()` function to query offscreen for current WebSocket state
+2. Call sync from `markOffscreenReady()` when offscreen initializes
+3. Call sync from `configureOffscreenNetwork()` after network setup
+4. Call sync from `checkGatewayHealth()` during periodic health checks
+
+**Verification**: hc-membrane WebSocket is working correctly - gateway logs show auth, register, and periodic pings being processed.
+
+### Previously: M2 Series Testing with ziptest
 
 Successfully tested all M2 endpoints with ziptest hApp:
 - `create_thing` - Created entry successfully
@@ -42,7 +56,6 @@ All M2 endpoints implemented and tested:
 
 1. **Agent refresh signing**: When browser disconnects, kitsune2's periodic agent info refresh (every ~30s) fails because remote signing requires active WebSocket. Agents are removed from space until browser reconnects. (This is expected behavior - agents come and go.)
 
-2. **MANUAL TESTING FAILS** currently hc-membrane doesn't actually work for getting entries from the network.  Looking into why isn't yielding much fruit as it looks like the two code bases (hc-http-gw-forked) are very similar.
 ---
 
 ## Quick Links
