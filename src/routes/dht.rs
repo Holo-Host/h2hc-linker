@@ -150,6 +150,41 @@ pub async fn dht_get_record(
     Ok(Json(json_value))
 }
 
+/// GET /dht/{dna_hash}/details/{hash}
+///
+/// Get details for a hash (including updates and deletes).
+#[tracing::instrument(skip(state))]
+pub async fn dht_get_details(
+    Path(path): Path<RecordPath>,
+    State(state): State<AppState>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let app_conn = state
+        .app_conn
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("Conductor not configured".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let hash = parse_any_dht_hash(&path.hash)?;
+
+    let input = GetRecordInput {
+        hash,
+        options: GetOptionsInput {
+            strategy: GetStrategyInput::Network,
+        },
+    };
+
+    let payload = ExternIO::encode(input)
+        .map_err(|e| HcMembraneError::Serialization(format!("Failed to encode: {}", e)))?;
+
+    let result = app_conn.call_dht_util(&dna_hash, "dht_get_details", payload).await?;
+
+    let json_value: serde_json::Value = result
+        .decode()
+        .map_err(|e| HcMembraneError::Serialization(format!("Failed to decode: {}", e)))?;
+
+    Ok(Json(json_value))
+}
+
 /// GET /dht/{dna_hash}/links
 ///
 /// Get links from a base hash.
