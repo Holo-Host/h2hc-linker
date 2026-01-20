@@ -25,6 +25,7 @@
 //! ```
 
 use crate::agent_proxy::AgentProxyManager;
+use crate::dht_query::PendingDhtResponses;
 use crate::proxy_agent::ProxyAgent;
 use crate::routes::websocket::ServerMessage;
 use crate::wire_preflight::WirePreflightMessage;
@@ -53,23 +54,44 @@ fn signal_to_b64(signal: &ExternIO) -> String {
 #[derive(Debug)]
 pub struct KitsuneProxy {
     agent_proxy: AgentProxyManager,
+    /// Shared pending DHT responses for routing responses to DhtQuery requests
+    pending_dht_responses: PendingDhtResponses,
 }
 
 impl KitsuneProxy {
     /// Create a new KitsuneProxy with the given agent proxy manager.
     pub fn new(agent_proxy: AgentProxyManager) -> Self {
-        Self { agent_proxy }
+        Self {
+            agent_proxy,
+            pending_dht_responses: PendingDhtResponses::new(),
+        }
+    }
+
+    /// Create a new KitsuneProxy with shared pending DHT responses.
+    ///
+    /// Use this constructor when you need the pending responses to be shared
+    /// with a DhtQuery instance for response routing.
+    pub fn with_pending_responses(
+        agent_proxy: AgentProxyManager,
+        pending_dht_responses: PendingDhtResponses,
+    ) -> Self {
+        Self {
+            agent_proxy,
+            pending_dht_responses,
+        }
     }
 }
 
 impl KitsuneHandler for KitsuneProxy {
     fn create_space(&self, space_id: SpaceId) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
         let agent_proxy = self.agent_proxy.clone();
+        let pending_dht_responses = self.pending_dht_responses.clone();
         Box::pin(async move {
             info!(?space_id, "Creating proxy space handler");
             let handler: DynSpaceHandler = Arc::new(ProxySpaceHandler {
                 space_id,
                 agent_proxy,
+                pending_dht_responses,
             });
             Ok(handler)
         })
@@ -131,10 +153,14 @@ impl KitsuneHandler for KitsuneProxy {
 ///
 /// When a `RemoteSignalEvt` is received, it decodes the wire message
 /// and forwards the signal to the appropriate browser agent via WebSocket.
+/// When response messages (GetRes, GetLinksRes) are received, it routes
+/// them to pending DhtQuery requests.
 #[derive(Debug)]
 struct ProxySpaceHandler {
     space_id: SpaceId,
     agent_proxy: AgentProxyManager,
+    /// Shared pending DHT responses for routing responses to DhtQuery requests
+    pending_dht_responses: PendingDhtResponses,
 }
 
 impl SpaceHandler for ProxySpaceHandler {
@@ -210,6 +236,20 @@ impl ProxySpaceHandler {
                     }
                 });
             }
+
+            // DHT query response messages - route to pending DhtQuery requests
+            msg @ WireMessage::GetRes { .. }
+            | msg @ WireMessage::GetLinksRes { .. }
+            | msg @ WireMessage::ErrorRes { .. } => {
+                let pending = self.pending_dht_responses.clone();
+                tokio::spawn(async move {
+                    let routed = pending.route_response(msg).await;
+                    if routed {
+                        debug!("Routed DHT response to pending request");
+                    }
+                });
+            }
+
             other => {
                 debug!(
                     msg_type = ?std::mem::discriminant(&other),
@@ -380,7 +420,7 @@ impl GatewayKitsune {
     }
 
     /// Get or create a space for a DNA.
-    async fn get_or_create_space(&self, dna_hash: &DnaHash) -> Result<DynSpace, String> {
+    pub async fn get_or_create_space(&self, dna_hash: &DnaHash) -> Result<DynSpace, String> {
         // Check if space exists
         {
             let spaces = self.spaces.read().await;
@@ -830,6 +870,7 @@ mod tests {
         let handler = ProxySpaceHandler {
             space_id: dna.to_k2_space(),
             agent_proxy,
+            pending_dht_responses: PendingDhtResponses::new(),
         };
         assert!(format!("{:?}", handler).contains("ProxySpaceHandler"));
     }
@@ -877,6 +918,7 @@ mod tests {
         let handler = ProxySpaceHandler {
             space_id: dna.to_k2_space(),
             agent_proxy,
+            pending_dht_responses: PendingDhtResponses::new(),
         };
 
         // Create a RemoteSignalEvt
@@ -921,6 +963,7 @@ mod tests {
         let handler = ProxySpaceHandler {
             space_id: space_id.clone(),
             agent_proxy: agent_proxy.clone(),
+            pending_dht_responses: PendingDhtResponses::new(),
         };
 
         // Create a RemoteSignalEvt
@@ -976,6 +1019,7 @@ mod tests {
         let handler = ProxySpaceHandler {
             space_id: dna.to_k2_space(),
             agent_proxy: agent_proxy.clone(),
+            pending_dht_responses: PendingDhtResponses::new(),
         };
 
         // Create a RemoteSignalEvt for an unregistered agent

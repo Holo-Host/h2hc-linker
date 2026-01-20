@@ -1,8 +1,10 @@
 //! DHT endpoints for hc-membrane.
 //!
-//! These endpoints provide DHT access via the conductor's dht_util zome.
-//! This is temporary scaffolding that will be replaced with direct kitsune2
-//! queries in M6.
+//! When built with the default configuration (no `conductor-dht` feature),
+//! these endpoints query the DHT directly via kitsune2 wire protocol.
+//!
+//! When built with `conductor-dht` feature enabled, these endpoints use
+//! the conductor's dht_util zome (M2 compatibility mode).
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -13,6 +15,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{HcMembraneError, HcMembraneResult};
 use crate::service::AppState;
+
+// For direct DHT queries (default mode)
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::link::WireLinkKey;
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::prelude::{LinkTag, LinkTypeFilter};
 
 // ============================================================================
 // Hash parsing helpers
@@ -86,6 +94,8 @@ pub struct GetLinksInput {
     pub link_type: Option<u16>,
     #[serde(default)]
     pub tag_prefix: Option<Vec<u8>>,
+    #[serde(default)]
+    pub zome_index: Option<u8>,
 }
 
 // ============================================================================
@@ -109,6 +119,9 @@ pub struct LinksQuery {
     #[serde(rename = "type")]
     pub link_type: Option<u16>,
     pub tag: Option<String>,
+    /// Optional zome index for filtering links. Required when filtering by link_type.
+    /// If omitted and no link_type filter, returns links from all zomes.
+    pub zome_index: Option<u8>,
 }
 
 // ============================================================================
@@ -118,7 +131,39 @@ pub struct LinksQuery {
 /// GET /dht/{dna_hash}/record/{hash}
 ///
 /// Get a record by action or entry hash.
+///
+/// In default mode, this queries the DHT directly via kitsune2.
+/// With `conductor-dht` feature, this uses the conductor's dht_util zome.
 #[tracing::instrument(skip(state))]
+#[cfg(not(feature = "conductor-dht"))]
+pub async fn dht_get_record(
+    Path(path): Path<RecordPath>,
+    State(state): State<AppState>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let dht_query = state
+        .dht_query
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let hash = parse_any_dht_hash(&path.hash)?;
+
+    let result = dht_query.get(&dna_hash, hash).await?;
+
+    match result {
+        Some(wire_ops) => {
+            let json_value = wire_ops_to_json(&wire_ops);
+            Ok(Json(json_value))
+        }
+        None => Ok(Json(serde_json::Value::Null)),
+    }
+}
+
+/// GET /dht/{dna_hash}/record/{hash}
+///
+/// Get a record by action or entry hash (conductor mode).
+#[tracing::instrument(skip(state))]
+#[cfg(feature = "conductor-dht")]
 pub async fn dht_get_record(
     Path(path): Path<RecordPath>,
     State(state): State<AppState>,
@@ -141,7 +186,9 @@ pub async fn dht_get_record(
     let payload = ExternIO::encode(input)
         .map_err(|e| HcMembraneError::Serialization(format!("Failed to encode: {}", e)))?;
 
-    let result = app_conn.call_dht_util(&dna_hash, "dht_get_record", payload).await?;
+    let result = app_conn
+        .call_dht_util(&dna_hash, "dht_get_record", payload)
+        .await?;
 
     let json_value: serde_json::Value = result
         .decode()
@@ -188,7 +235,88 @@ pub async fn dht_get_details(
 /// GET /dht/{dna_hash}/links
 ///
 /// Get links from a base hash.
+///
+/// In default mode, this queries the DHT directly via kitsune2.
+/// With `conductor-dht` feature, this uses the conductor's dht_util zome.
 #[tracing::instrument(skip(state))]
+#[cfg(not(feature = "conductor-dht"))]
+pub async fn dht_get_links(
+    Path(path): Path<LinksPath>,
+    Query(query): Query<LinksQuery>,
+    State(state): State<AppState>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let dht_query = state
+        .dht_query
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let base = parse_any_linkable_hash(&query.base)?;
+
+    let tag = if let Some(tag_str) = query.tag {
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &tag_str)
+            .map_err(|_| HcMembraneError::RequestMalformed("Invalid tag encoding".to_string()))?;
+        Some(LinkTag::new(bytes))
+    } else {
+        None
+    };
+
+    // Build the WireLinkKey for the query
+    // - If zome_index + link_type provided: filter by specific zome and type
+    // - If zome_index only: all types from that zome
+    // - If neither: match all links (Types(Vec::new()))
+    // - If link_type without zome_index: error (zome_index required for type filtering)
+    let type_query = match (query.zome_index, query.link_type) {
+        (Some(zome_idx), Some(link_type)) => {
+            // Specific zome and link type
+            LinkTypeFilter::single_type(zome_idx.into(), (link_type as u8).into())
+        }
+        (Some(zome_idx), None) => {
+            // All link types from specific zome
+            LinkTypeFilter::single_dep(zome_idx.into())
+        }
+        (None, Some(_)) => {
+            // link_type without zome_index - can't filter properly
+            return Err(HcMembraneError::RequestMalformed(
+                "zome_index is required when filtering by link type".to_string(),
+            ));
+        }
+        (None, None) => {
+            // No filtering - match all links from all zomes
+            LinkTypeFilter::Types(Vec::new())
+        }
+    };
+
+    let link_key = WireLinkKey {
+        base,
+        type_query,
+        tag,
+        after: None,
+        before: None,
+        author: None, // Don't filter by author
+    };
+
+    let result = dht_query.get_links(&dna_hash, link_key).await?;
+
+    match result {
+        Some(wire_link_ops) => {
+            tracing::debug!(
+                creates_count = wire_link_ops.creates.len(),
+                deletes_count = wire_link_ops.deletes.len(),
+                "Direct DHT get_links response"
+            );
+            let json_value = wire_link_ops_to_json(&wire_link_ops);
+            Ok(Json(json_value))
+        }
+        None => Ok(Json(serde_json::json!({ "links": [] }))),
+    }
+}
+
+/// GET /dht/{dna_hash}/links
+///
+/// Get links from a base hash (conductor mode).
+#[tracing::instrument(skip(state))]
+#[cfg(feature = "conductor-dht")]
 pub async fn dht_get_links(
     Path(path): Path<LinksPath>,
     Query(query): Query<LinksQuery>,
@@ -214,16 +342,50 @@ pub async fn dht_get_links(
         base,
         link_type: query.link_type,
         tag_prefix,
+        zome_index: query.zome_index,
     };
 
     let payload = ExternIO::encode(input)
         .map_err(|e| HcMembraneError::Serialization(format!("Failed to encode: {}", e)))?;
 
-    let result = app_conn.call_dht_util(&dna_hash, "dht_get_links", payload).await?;
+    let result = app_conn
+        .call_dht_util(&dna_hash, "dht_get_links", payload)
+        .await?;
 
     let json_value: serde_json::Value = result
         .decode()
         .map_err(|e| HcMembraneError::Serialization(format!("Failed to decode: {}", e)))?;
 
     Ok(Json(json_value))
+}
+
+// ============================================================================
+// Wire type to JSON conversion (for direct DHT mode)
+// ============================================================================
+
+/// Convert WireOps to JSON.
+#[cfg(not(feature = "conductor-dht"))]
+fn wire_ops_to_json(ops: &holochain_types::dht_op::WireOps) -> serde_json::Value {
+    // Serialize the WireOps directly to JSON
+    // This preserves the full structure for debugging and compatibility
+    match serde_json::to_value(ops) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::warn!("Failed to serialize WireOps: {}", e);
+            serde_json::Value::Null
+        }
+    }
+}
+
+/// Convert WireLinkOps to JSON.
+#[cfg(not(feature = "conductor-dht"))]
+fn wire_link_ops_to_json(ops: &holochain_types::link::WireLinkOps) -> serde_json::Value {
+    // Serialize the WireLinkOps directly to JSON
+    match serde_json::to_value(ops) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::warn!("Failed to serialize WireLinkOps: {}", e);
+            serde_json::json!({ "links": [] })
+        }
+    }
 }

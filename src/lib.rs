@@ -19,6 +19,7 @@
 pub(crate) mod agent_proxy;
 mod config;
 pub mod conductor;
+pub(crate) mod dht_query;
 mod error;
 pub(crate) mod gateway_kitsune;
 mod kitsune;

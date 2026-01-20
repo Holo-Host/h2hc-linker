@@ -1,35 +1,50 @@
 # Current Session
 
 **Last Updated**: 2026-01-19
-**Current Step**: M4 (Integrate holochain_p2p)
+**Current Step**: M4 Complete - Direct DHT Operations via Kitsune2
 
 ---
 
 ## Active Work
 
-### Just Completed: Fixed ziptest "WS: Disconnected" display issue
+### Just Completed: M4 - Direct DHT Operations via Kitsune2 Wire Protocol
 
-**Problem**: ziptest UI showed "WS: Disconnected" while extension debug panel showed "WS: Connected"
+**Goal**: Replace conductor-based DHT reads with direct kitsune2 wire protocol queries.
 
-**Root Cause**: Fishy extension bug - `connectionStatus.wsHealthy` in background wasn't being synced with actual WebSocket state from offscreen document. The extension popup queries offscreen directly (correct), but ziptest uses `window.holochain.getConnectionStatus()` which queries the background's stale `connectionStatus.wsHealthy`.
+**Implementation**:
+1. Created `DhtQuery` module (`src/dht_query.rs`) with:
+   - `PendingDhtResponses` - shared response routing between DhtQuery and ProxySpaceHandler
+   - `DhtQuery` - handles get() and get_links() via wire protocol
+   - Peer discovery via `get_responsive_remote_agents_near_location()`
+   - Parallel querying of multiple peers with first-non-empty-response selection
 
-**Fix Applied** (in `../fishy/packages/extension/src/background/index.ts`):
-1. Added `syncWebSocketStateFromOffscreen()` function to query offscreen for current WebSocket state
-2. Call sync from `markOffscreenReady()` when offscreen initializes
-3. Call sync from `configureOffscreenNetwork()` after network setup
-4. Call sync from `checkGatewayHealth()` during periodic health checks
+2. Updated `ProxySpaceHandler` to route GetRes/GetLinksRes/ErrorRes to pending requests
 
-**Verification**: hc-membrane WebSocket is working correctly - gateway logs show auth, register, and periodic pings being processed.
+3. Added `conductor-dht` feature flag:
+   - Default (no feature): Direct DHT queries via kitsune2
+   - `--features conductor-dht`: Use conductor's dht_util zome (M2 compatibility)
 
-### Previously: M2 Series Testing with ziptest
+4. Updated DHT routes with feature-flagged implementations:
+   - `dht_get_record()` - queries DHT directly for record by hash
+   - `dht_get_links()` - queries DHT directly for links by base hash
+   - `dht_get_details()` - still uses conductor (details not yet supported in direct mode)
 
-Successfully tested all M2 endpoints with ziptest hApp:
-- `create_thing` - Created entry successfully
-- `get_things` - Retrieved links to created entries
+**Files Modified**:
+- `src/dht_query.rs` (NEW) - DHT query implementation
+- `src/gateway_kitsune.rs` - Response routing, PendingDhtResponses integration
+- `src/service.rs` - DhtQuery initialization, feature flags
+- `src/routes/dht.rs` - Feature-flagged endpoint implementations
+- `Cargo.toml` - Added `conductor-dht` feature
 
-**Infrastructure added**:
-- Added `--gateway=membrane` option to `../fishy/scripts/e2e-test-setup.sh`
-- Committed to fishy repo: `f2ac5a7 feat: add --gateway option to e2e-test-setup.sh`
+**Build Verification**:
+```bash
+# Default (direct DHT mode)
+cargo build
+cargo test   # 44 tests pass
+
+# Conductor DHT mode
+cargo build --features conductor-dht
+```
 
 ---
 
@@ -44,17 +59,23 @@ All M2 endpoints implemented and tested:
 
 ---
 
-## Next Step: M4 (Integrate holochain_p2p)
+## Next Step: M5 (E2E Testing)
 
-**Goal**: Replace conductor-based DHT reads with holochain_p2p layer.
+**Goal**: Test M4 direct DHT queries with ziptest.
 
-**Why**: Currently hc-membrane uses the conductor's dht_util zome for get/get_links. M4 integrates holochain_p2p directly so hc-membrane can query the DHT without conductor involvement.
+**Tasks**:
+1. Start e2e-test-setup with hc-membrane
+2. Create entry via ziptest
+3. Verify direct DHT get returns the entry
+4. Verify direct DHT get_links returns links
 
 ---
 
 ## Known Issues
 
 1. **Agent refresh signing**: When browser disconnects, kitsune2's periodic agent info refresh (every ~30s) fails because remote signing requires active WebSocket. Agents are removed from space until browser reconnects. (This is expected behavior - agents come and go.)
+
+2. **dht_get_details**: Still uses conductor mode - direct wire protocol doesn't expose details endpoint yet.
 
 ---
 
