@@ -301,6 +301,43 @@ impl DhtQuery {
         space: &DynSpace,
         loc: u32,
     ) -> HcMembraneResult<Vec<(AgentPubKey, Url)>> {
+        // First log what we have in peer store
+        match space.peer_store().get_all().await {
+            Ok(all_peers) => {
+                info!(
+                    peer_count = all_peers.len(),
+                    loc,
+                    "Peer store contents for DHT query"
+                );
+                for peer in &all_peers {
+                    debug!(
+                        agent = ?peer.agent,
+                        url = ?peer.url,
+                        arc = ?peer.storage_arc,
+                        is_tombstone = peer.is_tombstone,
+                        contains_loc = peer.storage_arc.contains(loc),
+                        "Peer in store"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(?e, "Failed to get all peers for debug");
+            }
+        }
+
+        // Also log local agents
+        match space.local_agent_store().get_all().await {
+            Ok(local_agents) => {
+                info!(
+                    local_agent_count = local_agents.len(),
+                    "Local agents in space"
+                );
+            }
+            Err(e) => {
+                warn!(?e, "Failed to get local agents for debug");
+            }
+        }
+
         let agents = get_responsive_remote_agents_near_location(
             space.peer_store().clone(),
             space.local_agent_store().clone(),
@@ -311,13 +348,21 @@ impl DhtQuery {
         .await
         .map_err(|e| HcMembraneError::Internal(format!("Failed to get peers: {e}")))?;
 
+        info!(
+            responsive_count = agents.len(),
+            loc,
+            "Found responsive remote agents"
+        );
+
         Ok(agents
             .into_iter()
             .filter_map(|a| {
                 if a.url.is_none() || a.is_tombstone {
+                    debug!(agent = ?a.agent, "Skipping agent (no url or tombstone)");
                     return None;
                 }
                 if !a.storage_arc.contains(loc) {
+                    debug!(agent = ?a.agent, arc = ?a.storage_arc, loc, "Skipping agent (arc doesn't contain loc)");
                     return None;
                 }
                 Some((
