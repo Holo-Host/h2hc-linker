@@ -18,9 +18,13 @@ use crate::service::AppState;
 
 // For direct DHT queries (default mode)
 #[cfg(not(feature = "conductor-dht"))]
+use holo_hash::HashableContentExtSync;
+#[cfg(not(feature = "conductor-dht"))]
 use holochain_types::link::WireLinkKey;
 #[cfg(not(feature = "conductor-dht"))]
-use holochain_types::prelude::{LinkTag, LinkTypeFilter};
+use holochain_types::prelude::{Action, CreateLink, LinkTag, LinkTypeFilter};
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_zome_types::link::Link;
 
 // ============================================================================
 // Hash parsing helpers
@@ -288,9 +292,9 @@ pub async fn dht_get_links(
     };
 
     let link_key = WireLinkKey {
-        base,
+        base: base.clone(),
         type_query,
-        tag,
+        tag: tag.clone(),
         after: None,
         before: None,
         author: None, // Don't filter by author
@@ -305,10 +309,14 @@ pub async fn dht_get_links(
                 deletes_count = wire_link_ops.deletes.len(),
                 "Direct DHT get_links response"
             );
-            let json_value = wire_link_ops_to_json(&wire_link_ops);
+            let links = wire_link_ops_to_links(&wire_link_ops, &base, tag.as_ref());
+            let json_value = serde_json::to_value(&links).unwrap_or_else(|e| {
+                tracing::warn!("Failed to serialize links: {}", e);
+                serde_json::json!([])
+            });
             Ok(Json(json_value))
         }
-        None => Ok(Json(serde_json::json!({ "links": [] }))),
+        None => Ok(Json(serde_json::json!([]))),
     }
 }
 
@@ -377,15 +385,61 @@ fn wire_ops_to_json(ops: &holochain_types::dht_op::WireOps) -> serde_json::Value
     }
 }
 
-/// Convert WireLinkOps to JSON.
+/// Convert WireLinkOps to Vec<Link> with properly computed ActionHash.
+///
+/// This converts the wire protocol format to the same format that the conductor
+/// returns via the dht_util zome, ensuring consistency between both modes.
 #[cfg(not(feature = "conductor-dht"))]
-fn wire_link_ops_to_json(ops: &holochain_types::link::WireLinkOps) -> serde_json::Value {
-    // Serialize the WireLinkOps directly to JSON
-    match serde_json::to_value(ops) {
-        Ok(json) => json,
-        Err(e) => {
-            tracing::warn!("Failed to serialize WireLinkOps: {}", e);
-            serde_json::json!({ "links": [] })
-        }
-    }
+fn wire_link_ops_to_links(
+    ops: &holochain_types::link::WireLinkOps,
+    base: &AnyLinkableHash,
+    query_tag: Option<&LinkTag>,
+) -> Vec<Link> {
+    ops.creates
+        .iter()
+        .map(|wire_create| {
+            // Get the tag from the wire create or fall back to query tag
+            // If neither is available, use empty tag (the link exists but tag was optimized away)
+            // Note: This may produce incorrect ActionHash if tag is missing
+            let tag = wire_create.tag.clone()
+                .or_else(|| query_tag.cloned())
+                .unwrap_or_else(|| LinkTag::new(Vec::new()));
+
+            // Reconstruct the full CreateLink action to compute its hash
+            let create_link = CreateLink {
+                author: wire_create.author.clone(),
+                timestamp: wire_create.timestamp,
+                action_seq: wire_create.action_seq,
+                prev_action: wire_create.prev_action.clone(),
+                base_address: base.clone(),
+                target_address: wire_create.target_address.clone(),
+                zome_index: wire_create.zome_index,
+                link_type: wire_create.link_type,
+                tag: tag.clone(),
+                weight: wire_create.weight.clone(),
+            };
+
+            // Compute the ActionHash by hashing the Action
+            let action = Action::CreateLink(create_link);
+            let action_hash: ActionHash = action.to_hash();
+
+            tracing::debug!(
+                target = %wire_create.target_address,
+                computed_hash = %action_hash,
+                has_tag = wire_create.tag.is_some(),
+                "Converted WireCreateLink to Link"
+            );
+
+            Link {
+                author: wire_create.author.clone(),
+                base: base.clone(),
+                target: wire_create.target_address.clone(),
+                timestamp: wire_create.timestamp,
+                zome_index: wire_create.zome_index,
+                link_type: wire_create.link_type,
+                tag,
+                create_link_hash: action_hash,
+            }
+        })
+        .collect()
 }

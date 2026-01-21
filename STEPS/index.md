@@ -13,12 +13,12 @@
 | M2d | ✅ | DHT Publish Endpoint |
 | M2e | ✅ | Zome Call Endpoint |
 | M3 | ✅ | Add Kitsune liveness endpoints |
-| M4 | ✅ | Direct DHT Operations via Kitsune2 |
+| M4 | ❌ | Direct DHT Operations via Kitsune2 (BLOCKED - wire protocol not working) |
 | M5 | 📋 | Migrate op construction to gateway |
 | M6 | 📋 | Remove conductor dependency |
 | M7 | 📋 | Deprecate hc-http-gw-fork |
 
-**Legend**: ✅ Complete | ⏳ In Progress | 📋 Planned | ❌ Blocked
+**Legend**: ✅ Complete | ⏳ In Progress | 📋 Planned | ❌ Blocked (code complete but not working)
 
 ---
 
@@ -107,9 +107,10 @@ Implementation:
 - ⚠️ Full ziptest requires M2 (DHT endpoints not yet implemented)
 
 ### Step M4: Direct DHT Operations via Kitsune2
-**Status**: ✅ Complete
+**Status**: ❌ BLOCKED
+**Details**: [M4_STATUS.md](./M4_STATUS.md)
 
-Implemented direct DHT queries via kitsune2 wire protocol, bypassing conductor:
+Code complete but direct wire protocol does not work - conductors don't respond:
 
 - ✅ Created `DhtQuery` module (`src/dht_query.rs`)
   - `PendingDhtResponses` for shared response routing
@@ -119,8 +120,11 @@ Implemented direct DHT queries via kitsune2 wire protocol, bypassing conductor:
 - ✅ Added `conductor-dht` feature flag for M2 compatibility
 - ✅ Feature-flagged DHT route implementations
 - ✅ 44 unit tests passing
-- ✅ Both build modes verified: default (direct) and --features conductor-dht
-- **Test**: E2E testing with ziptest pending (M5)
+- ✅ Both build modes compile
+- ❌ **Direct mode**: Conductors do not respond to GetReq/GetLinksReq - all queries timeout
+- ✅ **conductor-dht mode**: Works (uses zome calls)
+
+**Workaround**: Build with `--features conductor-dht` until direct wire protocol is fixed
 
 ### Step M5: Migrate op construction to gateway
 **Status**: 📋 Planned

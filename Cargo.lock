@@ -1316,6 +1316,7 @@ dependencies = [
  "holochain_serialized_bytes",
  "holochain_types",
  "holochain_websocket",
+ "holochain_zome_types",
  "http-body-util",
  "kitsune2",
  "kitsune2_api",

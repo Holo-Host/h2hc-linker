@@ -24,6 +24,7 @@ holochain_client = "0.8.0"
 holochain_conductor_api = "0.6.0"
 holochain_serialized_bytes = "0.0"
 holochain_types = "0.6.0"
+holochain_zome_types = "0.6.0"
 holochain_websocket = "0.6.0"
 holochain_p2p = "0.6.0"
 kitsune2 = { version = "0.3.0", default-features = false, features = ["datachannel-vendored"] }
