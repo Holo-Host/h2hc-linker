@@ -55,6 +55,12 @@ pub struct NetworkStatus {
     pub total_peers: usize,
     /// Number of active spaces (DNAs)
     pub active_spaces: usize,
+    /// Number of peers with full arcs (conductors/authorities)
+    pub full_arc_peers: usize,
+    /// Number of peers currently blocking our messages
+    pub blocked_peers: usize,
+    /// Ready for DHT queries (has full-arc peers and none blocking)
+    pub ready: bool,
 }
 
 /// Peer info for API responses - serializable wrapper around AgentInfo
@@ -155,23 +161,49 @@ pub fn kitsune_routes() -> Router<Arc<KitsuneState>> {
 async fn get_network_status(
     State(state): State<Arc<KitsuneState>>,
 ) -> HcMembraneResult<Json<NetworkStatus>> {
-    let (total_peers, active_spaces) = if let Some(kitsune) = &state.kitsune {
-        let spaces = kitsune.list_spaces();
-        let active_spaces = spaces.len();
+    let (total_peers, active_spaces, full_arc_peers, blocked_peers) =
+        if let Some(kitsune) = &state.kitsune {
+            let spaces = kitsune.list_spaces();
+            let active_spaces = spaces.len();
 
-        // Aggregate peer count across all spaces
-        let mut total_peers = 0;
-        for space_id in spaces {
-            if let Some(space) = kitsune.space_if_exists(space_id).await {
-                if let Ok(peers) = space.peer_store().get_all().await {
-                    total_peers += peers.len();
+            // Aggregate peer count across all spaces
+            let mut total_peers = 0;
+            let mut full_arc_peers = 0;
+            for space_id in spaces {
+                if let Some(space) = kitsune.space_if_exists(space_id).await {
+                    if let Ok(peers) = space.peer_store().get_all().await {
+                        total_peers += peers.len();
+                        // Count peers with full arcs (conductors/authorities)
+                        for peer in &peers {
+                            let info = peer.get_agent_info();
+                            if let DhtArc::Arc(start, end) = info.storage_arc {
+                                if start == 0 && end == u32::MAX {
+                                    full_arc_peers += 1;
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
-        (total_peers, active_spaces)
-    } else {
-        (0, 0)
-    };
+
+            // Get blocked peer count from transport stats
+            let blocked_peers = if let Ok(transport) = kitsune.transport().await {
+                if let Ok(stats) = transport.dump_network_stats().await {
+                    stats.blocked_message_counts.len()
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            (total_peers, active_spaces, full_arc_peers, blocked_peers)
+        } else {
+            (0, 0, 0, 0)
+        };
+
+    // Ready when we have full-arc peers (conductors) and none are blocking us
+    let ready = full_arc_peers > 0 && blocked_peers == 0;
 
     Ok(Json(NetworkStatus {
         connected: state.enabled && state.kitsune.is_some(),
@@ -179,6 +211,9 @@ async fn get_network_status(
         signal_url: state.signal_url.clone(),
         total_peers,
         active_spaces,
+        full_arc_peers,
+        blocked_peers,
+        ready,
     }))
 }
 

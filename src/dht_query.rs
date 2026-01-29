@@ -95,22 +95,37 @@ impl PendingDhtResponses {
             }
         };
 
-        let (responder, pending_count) = {
+        info!(msg_id, "Attempting to route response to pending request");
+
+        let (responder, pending_count, pending_ids) = {
             let mut guard = self.inner.write().await;
+            let pending_ids: Vec<u64> = guard.keys().copied().collect();
             let r = guard.remove(&msg_id);
-            (r, guard.len())
+            (r, guard.len(), pending_ids)
         };
+
+        info!(
+            msg_id,
+            pending_count,
+            ?pending_ids,
+            "Pending requests state before routing"
+        );
 
         match responder {
             Some(tx) => {
-                debug!(msg_id, pending_count, "Routing DHT response to pending request");
+                info!(msg_id, "Found matching pending request, sending response...");
                 if tx.send(msg).is_err() {
-                    debug!(msg_id, "Pending request receiver dropped (caller cancelled)");
+                    warn!(msg_id, "Pending request receiver dropped (caller cancelled)");
                 }
                 true
             }
             None => {
-                debug!(msg_id, pending_count, "No pending request for msg_id (possibly timed out or wrong instance)");
+                warn!(
+                    msg_id,
+                    pending_count,
+                    ?pending_ids,
+                    "No pending request for msg_id - response dropped (possibly timed out or wrong instance)"
+                );
                 false
             }
         }
@@ -382,46 +397,91 @@ impl DhtQuery {
         pending: PendingDhtResponses,
         timeout: Duration,
     ) -> HcMembraneResult<Option<WireOps>> {
-        let (msg_id, req) = WireMessage::get_req(to_agent.clone(), hash);
+        let (msg_id, req) = WireMessage::get_req(to_agent.clone(), hash.clone());
+
+        info!(
+            msg_id,
+            %to_url,
+            %to_agent,
+            %hash,
+            "Preparing GetReq message"
+        );
 
         let encoded = WireMessage::encode_batch(&[&req])
             .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+
+        info!(
+            msg_id,
+            encoded_len = encoded.len(),
+            "Encoded GetReq message"
+        );
 
         // Register pending request
         let (tx, rx) = oneshot::channel();
         pending.register(msg_id, tx).await;
 
+        info!(msg_id, "Registered pending request, sending via send_notify...");
+
         // Set up timeout to clean up pending request
         let pending_cleanup = pending.clone();
+        let timeout_msg_id = msg_id;
         tokio::spawn(async move {
             tokio::time::sleep(timeout).await;
-            pending_cleanup.remove(msg_id).await;
+            warn!(msg_id = timeout_msg_id, "Timeout cleanup triggered for pending request");
+            pending_cleanup.remove(timeout_msg_id).await;
         });
 
-        // Send request
-        space
-            .send_notify(to_url.clone(), encoded)
-            .await
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to send request: {e}")))?;
-
-        debug!(msg_id, %to_url, %to_agent, "Sent get request");
+        // Send request - this is the key step
+        let send_start = std::time::Instant::now();
+        match space.send_notify(to_url.clone(), encoded).await {
+            Ok(()) => {
+                info!(
+                    msg_id,
+                    %to_url,
+                    %to_agent,
+                    send_elapsed_ms = send_start.elapsed().as_millis(),
+                    "send_notify completed successfully, waiting for response..."
+                );
+            }
+            Err(e) => {
+                warn!(
+                    msg_id,
+                    %to_url,
+                    %to_agent,
+                    error = %e,
+                    "send_notify FAILED"
+                );
+                return Err(HcMembraneError::Internal(format!("Failed to send request: {e}")));
+            }
+        }
 
         // Wait for response
+        info!(msg_id, timeout_secs = timeout.as_secs(), "Waiting for response...");
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(WireMessage::GetRes { response, .. })) => {
-                debug!(msg_id, "Got response");
+                info!(msg_id, "Got GetRes response");
                 Ok(Some(response))
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
+                warn!(msg_id, %error, "Got ErrorRes response");
                 Err(HcMembraneError::Internal(format!("Remote error: {error}")))
             }
-            Ok(Ok(other)) => Err(HcMembraneError::Internal(format!(
-                "Unexpected response: {other:?}"
-            ))),
-            Ok(Err(_)) => Err(HcMembraneError::Internal(
-                "Response channel closed".to_string(),
-            )),
-            Err(_) => Err(HcMembraneError::Internal("Request timed out".to_string())),
+            Ok(Ok(other)) => {
+                warn!(msg_id, ?other, "Got unexpected response type");
+                Err(HcMembraneError::Internal(format!(
+                    "Unexpected response: {other:?}"
+                )))
+            }
+            Ok(Err(_)) => {
+                warn!(msg_id, "Response channel closed (receiver dropped)");
+                Err(HcMembraneError::Internal(
+                    "Response channel closed".to_string(),
+                ))
+            }
+            Err(_) => {
+                warn!(msg_id, timeout_secs = timeout.as_secs(), "Request TIMED OUT - no response received");
+                Err(HcMembraneError::Internal("Request timed out".to_string()))
+            }
         }
     }
 
@@ -437,49 +497,90 @@ impl DhtQuery {
         use holochain_p2p::event::GetLinksOptions;
 
         let (msg_id, req) =
-            WireMessage::get_links_req(to_agent.clone(), link_key, GetLinksOptions {});
+            WireMessage::get_links_req(to_agent.clone(), link_key.clone(), GetLinksOptions {});
+
+        info!(
+            msg_id,
+            %to_url,
+            %to_agent,
+            base = %link_key.base,
+            "Preparing GetLinksReq message"
+        );
 
         let encoded = WireMessage::encode_batch(&[&req])
             .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+
+        info!(
+            msg_id,
+            encoded_len = encoded.len(),
+            "Encoded GetLinksReq message"
+        );
 
         // Register pending request
         let (tx, rx) = oneshot::channel();
         pending.register(msg_id, tx).await;
 
+        info!(msg_id, "Registered pending request, sending via send_notify...");
+
         // Set up timeout to clean up pending request
         let pending_cleanup = pending.clone();
+        let timeout_msg_id = msg_id;
         tokio::spawn(async move {
             tokio::time::sleep(timeout).await;
-            pending_cleanup.remove(msg_id).await;
+            warn!(msg_id = timeout_msg_id, "Timeout cleanup triggered for pending get_links request");
+            pending_cleanup.remove(timeout_msg_id).await;
         });
 
-        // Send request
-        space.send_notify(to_url.clone(), encoded).await
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to send request: {e}")))?;
-
-        debug!(msg_id, %to_url, %to_agent, "Sent get_links request");
+        // Send request - this is the key step
+        let send_start = std::time::Instant::now();
+        match space.send_notify(to_url.clone(), encoded).await {
+            Ok(()) => {
+                info!(
+                    msg_id,
+                    %to_url,
+                    %to_agent,
+                    send_elapsed_ms = send_start.elapsed().as_millis(),
+                    "send_notify completed successfully, waiting for response..."
+                );
+            }
+            Err(e) => {
+                warn!(
+                    msg_id,
+                    %to_url,
+                    %to_agent,
+                    error = %e,
+                    "send_notify FAILED"
+                );
+                return Err(HcMembraneError::Internal(format!("Failed to send request: {e}")));
+            }
+        }
 
         // Wait for response
+        info!(msg_id, timeout_secs = timeout.as_secs(), "Waiting for get_links response...");
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(WireMessage::GetLinksRes { response, .. })) => {
-                debug!(
+                info!(
                     msg_id,
                     creates_count = response.creates.len(),
                     deletes_count = response.deletes.len(),
-                    "Got get_links response"
+                    "Got GetLinksRes response"
                 );
                 Ok(Some(response))
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
+                warn!(msg_id, %error, "Got ErrorRes response");
                 Err(HcMembraneError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
+                warn!(msg_id, ?other, "Got unexpected response type");
                 Err(HcMembraneError::Internal(format!("Unexpected response: {other:?}")))
             }
             Ok(Err(_)) => {
+                warn!(msg_id, "Response channel closed (receiver dropped)");
                 Err(HcMembraneError::Internal("Response channel closed".to_string()))
             }
             Err(_) => {
+                warn!(msg_id, timeout_secs = timeout.as_secs(), "GetLinks request TIMED OUT - no response received");
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }

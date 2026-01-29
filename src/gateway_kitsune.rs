@@ -165,22 +165,45 @@ struct ProxySpaceHandler {
 
 impl SpaceHandler for ProxySpaceHandler {
     fn recv_notify(&self, from_peer: Url, space_id: SpaceId, data: Bytes) -> K2Result<()> {
-        debug!(
+        info!(
             %from_peer,
             ?space_id,
             data_len = data.len(),
-            "Received notification in proxy space"
+            ">>> RECV_NOTIFY called - received notification in proxy space"
         );
 
         // Decode the wire messages
         match WireMessage::decode_batch(&data) {
             Ok(messages) => {
+                info!(
+                    message_count = messages.len(),
+                    "Decoded {} wire message(s)",
+                    messages.len()
+                );
                 for msg in messages {
+                    // Log what type of message we received
+                    match &msg {
+                        WireMessage::GetRes { msg_id, .. } => {
+                            info!(msg_id, ">>> Received GetRes response");
+                        }
+                        WireMessage::GetLinksRes { msg_id, .. } => {
+                            info!(msg_id, ">>> Received GetLinksRes response");
+                        }
+                        WireMessage::ErrorRes { msg_id, error } => {
+                            info!(msg_id, %error, ">>> Received ErrorRes response");
+                        }
+                        WireMessage::RemoteSignalEvt { to_agent, .. } => {
+                            info!(%to_agent, ">>> Received RemoteSignalEvt");
+                        }
+                        other => {
+                            debug!(?other, ">>> Received other message type");
+                        }
+                    }
                     self.handle_wire_message(msg, &from_peer);
                 }
             }
             Err(e) => {
-                warn!(%e, "Failed to decode wire messages");
+                warn!(%e, data_len = data.len(), "Failed to decode wire messages - data may be in wrong format");
             }
         }
 
@@ -241,11 +264,18 @@ impl ProxySpaceHandler {
             msg @ WireMessage::GetRes { .. }
             | msg @ WireMessage::GetLinksRes { .. }
             | msg @ WireMessage::ErrorRes { .. } => {
+                let msg_id = msg.get_msg_id();
+                info!(
+                    ?msg_id,
+                    "Routing DHT response to pending request handler"
+                );
                 let pending = self.pending_dht_responses.clone();
                 tokio::spawn(async move {
                     let routed = pending.route_response(msg).await;
                     if routed {
-                        debug!("Routed DHT response to pending request");
+                        info!(?msg_id, "Successfully routed DHT response to pending request");
+                    } else {
+                        warn!(?msg_id, "Failed to route DHT response - no matching pending request found");
                     }
                 });
             }
