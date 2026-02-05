@@ -28,14 +28,14 @@ use crate::agent_proxy::AgentProxyManager;
 use crate::dht_query::PendingDhtResponses;
 use crate::proxy_agent::ProxyAgent;
 use crate::routes::websocket::ServerMessage;
-use crate::wire_preflight::WirePreflightMessage;
+use crate::wire_preflight::{BootstrapWrapperFactory, PreflightCache, WirePreflightMessage};
 use base64::Engine;
 use bytes::Bytes;
 use holochain_p2p::WireMessage;
 use holochain_types::prelude::{AgentPubKey, DnaHash, ExternIO};
 use kitsune2_api::{
-    AgentId, BoxFut, DynKitsune, DynLocalAgent, DynSpace, DynSpaceHandler, K2Error, K2Result,
-    KitsuneHandler, SpaceHandler, SpaceId, Url,
+    AgentId, BoxFut, Config, DynKitsune, DynLocalAgent, DynSpace, DynSpaceHandler, K2Error,
+    K2Result, KitsuneHandler, SpaceHandler, SpaceId, Url,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,6 +56,8 @@ pub struct KitsuneProxy {
     agent_proxy: AgentProxyManager,
     /// Shared pending DHT responses for routing responses to DhtQuery requests
     pending_dht_responses: PendingDhtResponses,
+    /// Cached preflight data updated by bootstrap wrapper when agents are published
+    preflight_cache: PreflightCache,
 }
 
 impl KitsuneProxy {
@@ -64,6 +66,7 @@ impl KitsuneProxy {
         Self {
             agent_proxy,
             pending_dht_responses: PendingDhtResponses::new(),
+            preflight_cache: PreflightCache::new(),
         }
     }
 
@@ -78,12 +81,22 @@ impl KitsuneProxy {
         Self {
             agent_proxy,
             pending_dht_responses,
+            preflight_cache: PreflightCache::new(),
         }
+    }
+
+    /// Get the preflight cache (for sharing with BootstrapWrapperFactory).
+    pub fn preflight_cache(&self) -> &PreflightCache {
+        &self.preflight_cache
     }
 }
 
 impl KitsuneHandler for KitsuneProxy {
-    fn create_space(&self, space_id: SpaceId) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
+    fn create_space(
+        &self,
+        space_id: SpaceId,
+        _config: Option<&Config>,
+    ) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
         let agent_proxy = self.agent_proxy.clone();
         let pending_dht_responses = self.pending_dht_responses.clone();
         Box::pin(async move {
@@ -108,18 +121,20 @@ impl KitsuneHandler for KitsuneProxy {
 
     fn preflight_gather_outgoing(&self, peer_url: Url) -> BoxFut<'_, K2Result<Bytes>> {
         Box::pin(async move {
-            // Create preflight message with matching protocol version
-            let preflight = WirePreflightMessage::new();
+            // Return the cached preflight (updated by BootstrapWrapper when agents publish)
+            let preflight_bytes = self.preflight_cache.get();
 
-            info!(
-                %peer_url,
-                proto_ver = preflight.compat.proto_ver,
-                "Sending preflight to peer"
-            );
+            // Log what we're sending (decode for logging purposes)
+            if let Ok(preflight) = WirePreflightMessage::decode(&preflight_bytes) {
+                info!(
+                    %peer_url,
+                    proto_ver = preflight.compat.proto_ver,
+                    agent_count = preflight.agents.len(),
+                    "Sending preflight to peer"
+                );
+            }
 
-            preflight
-                .encode()
-                .map_err(|e| K2Error::other(format!("Failed to encode preflight: {e}")))
+            Ok(preflight_bytes)
         })
     }
 
@@ -299,7 +314,7 @@ impl ProxySpaceHandler {
 /// let (op_store_factory, op_store_handle) = TempOpStoreFactory::create();
 /// let kitsune = KitsuneProxyBuilder::new(proxy)
 ///     .with_bootstrap_url("https://bootstrap.example.com")
-///     .with_signal_url("wss://signal.example.com")
+///     .with_relay_url("https://relay.example.com")
 ///     .with_op_store(op_store_factory)
 ///     .build()
 ///     .await?;
@@ -307,7 +322,7 @@ impl ProxySpaceHandler {
 pub struct KitsuneProxyBuilder {
     handler: Arc<KitsuneProxy>,
     bootstrap_url: Option<String>,
-    signal_url: Option<String>,
+    relay_url: Option<String>,
     op_store_factory: Option<kitsune2_api::DynOpStoreFactory>,
 }
 
@@ -317,7 +332,7 @@ impl KitsuneProxyBuilder {
         Self {
             handler: Arc::new(handler),
             bootstrap_url: None,
-            signal_url: None,
+            relay_url: None,
             op_store_factory: None,
         }
     }
@@ -328,9 +343,9 @@ impl KitsuneProxyBuilder {
         self
     }
 
-    /// Set the signal server URL (for tx5 transport).
-    pub fn with_signal_url(mut self, url: impl Into<String>) -> Self {
-        self.signal_url = Some(url.into());
+    /// Set the relay server URL (for iroh transport).
+    pub fn with_relay_url(mut self, url: impl Into<String>) -> Self {
+        self.relay_url = Some(url.into());
         self
     }
 
@@ -345,8 +360,10 @@ impl KitsuneProxyBuilder {
     /// Build the kitsune2 instance.
     pub async fn build(self) -> Result<DynKitsune, Box<dyn std::error::Error + Send + Sync>> {
         use kitsune2::default_builder;
-        use kitsune2_core::factories::config::{CoreBootstrapConfig, CoreBootstrapModConfig};
-        use kitsune2_transport_tx5::config::{Tx5TransportConfig, Tx5TransportModConfig};
+        use kitsune2_core::factories::{
+            CoreBootstrapConfig, CoreBootstrapModConfig, CoreSpaceConfig, CoreSpaceModConfig,
+        };
+        use kitsune2_transport_iroh::{IrohTransportConfig, IrohTransportModConfig};
 
         let mut builder = default_builder();
 
@@ -355,40 +372,45 @@ impl KitsuneProxyBuilder {
             builder.op_store = op_store_factory;
         }
 
+        // Wrap the bootstrap factory to capture AgentInfoSigned for preflight.
+        // This ensures that when agents join and publish their info, the preflight
+        // cache is updated so conductors will accept our messages.
+        let preflight_cache = self.handler.preflight_cache().clone();
+        builder.bootstrap = Arc::new(BootstrapWrapperFactory::new(
+            preflight_cache,
+            builder.bootstrap,
+        ));
+
         let builder = builder.with_default_config()?;
 
         // Configure bootstrap server
         if let Some(bootstrap_url) = self.bootstrap_url {
             builder.config.set_module_config(&CoreBootstrapModConfig {
                 core_bootstrap: CoreBootstrapConfig {
-                    server_url: bootstrap_url,
+                    server_url: Some(bootstrap_url),
+                    backoff_max_ms: 10000,
                     ..Default::default()
                 },
             })?;
         }
 
-        // Configure signal server with STUN servers for WebRTC
-        if let Some(signal_url) = self.signal_url {
-            use kitsune2_transport_tx5::{IceServers, WebRtcConfig};
+        // Configure core space settings (matching conductor settings)
+        builder.config.set_module_config(&CoreSpaceModConfig {
+            core_space: CoreSpaceConfig {
+                re_sign_expire_time_ms: 10000,
+                re_sign_freq_ms: 10000,
+                ..Default::default()
+            },
+        })?;
 
-            builder.config.set_module_config(&Tx5TransportModConfig {
-                tx5_transport: Tx5TransportConfig {
-                    server_url: signal_url,
-                    signal_allow_plain_text: true, // TODO: configure for production
-                    webrtc_config: WebRtcConfig {
-                        ice_servers: vec![IceServers {
-                            urls: vec![
-                                "stun:stun.l.google.com:19302".to_string(),
-                                "stun:stun1.l.google.com:19302".to_string(),
-                            ],
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            })?;
-        }
+        // Configure iroh transport
+        builder.config.set_module_config(&IrohTransportModConfig {
+            iroh_transport: IrohTransportConfig {
+                relay_allow_plain_text: true,
+                relay_url: self.relay_url,
+                ..Default::default()
+            },
+        })?;
 
         // Build and register handler
         let kitsune = builder.build().await?;
@@ -464,7 +486,7 @@ impl GatewayKitsune {
 
         let space = self
             .kitsune
-            .space(space_id)
+            .space(space_id, None)
             .await
             .map_err(|e| format!("Failed to create space: {e}"))?;
 

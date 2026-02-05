@@ -36,8 +36,8 @@ pub struct Configuration {
     /// Bootstrap server URL for Kitsune2
     pub bootstrap_url: Option<String>,
 
-    /// WebRTC signal server URL for Kitsune2
-    pub signal_url: Option<String>,
+    /// Iroh relay server URL for Kitsune2
+    pub relay_url: Option<String>,
 
     /// Maximum payload size in bytes
     pub payload_limit_bytes: usize,
@@ -54,7 +54,7 @@ impl Default for Configuration {
         Self {
             admin_socket_addr: None,
             bootstrap_url: None,
-            signal_url: None,
+            relay_url: None,
             payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
             websocket: WebSocketConfig::default(),
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
@@ -76,8 +76,8 @@ impl Configuration {
         if let Ok(url) = std::env::var("HC_MEMBRANE_BOOTSTRAP_URL") {
             config.bootstrap_url = Some(url);
         }
-        if let Ok(url) = std::env::var("HC_MEMBRANE_SIGNAL_URL") {
-            config.signal_url = Some(url);
+        if let Ok(url) = std::env::var("HC_MEMBRANE_RELAY_URL") {
+            config.relay_url = Some(url);
         }
 
         // Payload limit
@@ -95,7 +95,8 @@ impl Configuration {
 
     /// Check if Kitsune2 is configured
     pub fn kitsune_enabled(&self) -> bool {
-        self.bootstrap_url.is_some() && self.signal_url.is_some()
+        // Bootstrap URL is required; relay URL is optional for iroh
+        self.bootstrap_url.is_some()
     }
 
     /// Check if conductor integration is configured

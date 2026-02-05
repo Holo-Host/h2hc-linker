@@ -1,64 +1,104 @@
 # M4 Status: Direct DHT Operations - WORKING
 
-**Last Updated**: 2026-01-26
-**Status**: WORKING - Direct wire protocol confirmed working
+**Last Updated**: 2026-02-05
+**Status**: WORKING - kitsune2 0.4.0-dev.2 + iroh + PreflightCache
 
 ---
 
 ## Summary
 
-**RESOLVED**: The direct kitsune2 wire protocol is working. Previous BLOCKED status was incorrect or the issue has been fixed by the logging changes.
+Direct wire protocol working with kitsune2 0.4.0-dev.2 and iroh transport, matching Holochain 0.6.1-rc.0.
 
-### Evidence from Test Run (2026-01-26)
-
-Gateway logs show successful request/response flow:
-
-```
-send_notify completed successfully, waiting for response... msg_id=229
->>> RECV_NOTIFY called - received notification in proxy space
-Decoded 1 wire message(s)
->>> Received GetLinksRes response msg_id=229
-Got GetLinksRes response msg_id=229 creates_count=1 deletes_count=0
-```
-
-Both GetReq/GetLinksReq and their responses (GetRes/GetLinksRes) are working correctly.
+**M4.1 Update (2026-02-05)**: Added PreflightCache to include registered agent infos in preflight messages, enabling conductor authorization.
 
 ---
 
 ## What Works
 
-1. **Direct wire protocol (default mode)**:
-   - Gateway sends GetReq/GetLinksReq via `space.send_notify()`
-   - Conductor receives, processes, and responds
-   - Gateway receives GetRes/GetLinksRes responses
-   - Response routing to pending requests works
+### 1. Direct Wire Protocol (default mode)
+- Gateway sends GetReq/GetLinksReq via `space.send_notify()`
+- Conductor receives, processes, and responds
+- Gateway receives GetRes/GetLinksRes responses
+- Response routing to pending requests works
 
-2. **conductor-dht mode** (fallback, still available):
-   - `cargo build --features conductor-dht`
-   - Uses conductor's dht_util zome for DHT queries
+### 2. Preflight Agent Info (NEW - M4.1)
+- PreflightCache captures AgentInfoSigned from Bootstrap::put()
+- Preflights include all registered browser agents
+- Conductors accept connections from gateway
+- Both GetReq and GetLinksReq responses received
 
-3. **Gateway infrastructure**:
-   - Gateway connects to kitsune2 network
-   - Discovers peers (conductors) with full arcs
-   - Registers browser agents in spaces
-   - Signal forwarding works (conductor → gateway)
-   - Publishing works (via kitsune2 publish mechanism)
+### 3. conductor-dht mode (fallback)
+- `cargo build --features conductor-dht`
+- Uses conductor's dht_util zome for DHT queries
+
+### 4. Gateway Infrastructure
+- Gateway connects to kitsune2 network via iroh
+- Discovers peers (conductors) with full arcs
+- Registers browser agents in spaces
+- Signal forwarding works (conductor → gateway)
+- Publishing works (via kitsune2 publish mechanism)
 
 ---
 
-## Current E2E Test Failures (Separate Issue)
+## Evidence from Test Run (2026-02-05)
 
-The tests fail due to **zome name/function mismatches**, not wire protocol issues:
-
+### Agent Registration & Preflight
 ```
-Error: Function 'create_1' not found in zome 'coordinator1'
+Agent AgentPubKey(...BEmDzl...) registered for DNA (total: 1)
+Agent AgentPubKey(...IfxZGx...) registered for DNA (total: 2)
+Updated preflight cache with agent infos agent_count=2
+Sending preflight to peer proto_ver=2 agent_count=2
+Validated incoming preflight proto_ver=2 agent_count=1
 ```
 
-The e2e tests (`dht-ops.test.ts`) expect a zome called `coordinator1` with functions like `create_1`, but `ziptest.happ` has different zome and function names.
+### Direct Wire Protocol
+```
+send_notify completed successfully, waiting for response... msg_id=223
+>>> Received GetLinksRes response msg_id=223
+Got GetLinksRes response msg_id=223 creates_count=1 deletes_count=0
+Converted WireCreateLink to Link target=uhCEkBEmDzlNWBWcEDEuVkCev96p5puZtzYPCyTxD2q9c-FC61fUJ
+```
 
-This needs to be fixed by either:
-1. Updating the e2e tests to use ziptest's actual zome names
-2. Creating a test hApp that matches what the tests expect
+### Publishing
+```
+Publishing ops to peers dna=uhC0k... op_count=1 peer_count=2 basis_loc=1568180260
+Published ops to peer url=http://127.0.0.1:38553/6559742f...
+Published ops to peer url=http://127.0.0.1:38553/4d8453ee...
+Publish request completed queued=9 failed=0 published=9 success=true
+```
+
+---
+
+## Current E2E Test Status
+
+### With ziptest + membrane (2026-02-05)
+- ✅ Both browser agents register with gateway
+- ✅ Gateway exchanges preflights with both conductors
+- ✅ Preflights include 2 agent infos
+- ✅ Conductors grant access to gateway URLs
+- ✅ Profiles published to both conductors
+- ✅ get_links returns correct data (both profiles found)
+- ⚠️ One browser window shows other agent's profile
+- ❌ Second browser window times out waiting for "active" agent
+
+### Remaining Issue
+The "active" status detection in ziptest UI relies on ping/signal responses between agents. Investigation needed:
+1. Are browser agents sending pings (remote signals) to each other?
+2. Is gateway forwarding browser-to-browser signals?
+3. Ziptest UI "active" status logic
+
+---
+
+## Files Modified (M4.1)
+
+| File | Change |
+|------|--------|
+| `src/wire_preflight.rs` | NEW: PreflightCache, BootstrapWrapper, BootstrapWrapperFactory |
+| `src/gateway_kitsune.rs` | Integrated preflight_cache into KitsuneProxy |
+| `src/service.rs` | Pass BootstrapWrapperFactory to kitsune builder |
+| `src/kitsune.rs` | API updates for kitsune2 0.4.x |
+| `src/config.rs` | relay_url config (renamed from signal_url) |
+| `Cargo.toml` | Dependencies updated for 0.6.1-rc.0 |
 
 ---
 
@@ -67,24 +107,39 @@ This needs to be fixed by either:
 ### Direct Mode (Default)
 
 ```bash
-# Build without conductor-dht
+# Build hc-membrane
 cd /home/eric/code/metacurrency/holochain/hc-membrane
-nix develop --command cargo build --release
+nix develop -c cargo build --release
 
-# Run e2e tests
+# Run unit tests
+nix develop -c cargo test
+
+# Run e2e tests (from fishy repo)
 cd /home/eric/code/metacurrency/holochain/fishy
-nix develop --command npm run e2e -- --happ=ziptest --gateway=membrane
+npm run e2e:env -- start --happ=ziptest --gateway=membrane
+npm run e2e:test
 ```
 
 ### With Debug Logging
 
 ```bash
-RUST_LOG=hc_membrane=info nix develop --command npm run e2e -- --happ=ziptest --gateway=membrane
+# Gateway with debug logs
+RUST_LOG=hc_membrane=debug nix develop -c cargo run --release
+
+# Or via e2e setup
+RUST_LOG=hc_membrane=debug npm run e2e:env -- start --happ=ziptest --gateway=membrane
 ```
 
 ---
 
-## Files Modified for Investigation
+## Next Steps
 
-- `src/dht_query.rs` - Added comprehensive logging for debugging
-- `src/gateway_kitsune.rs` - Added logging for recv_notify message handling
+1. **Diagnose "active" agent detection**:
+   - Check signal flow between browser agents
+   - Verify gateway forwards browser-to-browser signals
+   - Review ziptest UI "active" status logic
+
+2. **After e2e passes**:
+   - Commit all changes
+   - Update documentation
+   - Consider M5 (migrate op construction to gateway)

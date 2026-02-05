@@ -76,7 +76,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
 
 ### Build Environment (MANDATORY)
 
-**Always use `nix develop` for all cargo commands.** The project has native dependencies (libdatachannel, etc.) that require the nix environment.
+**Always use `nix develop` for all cargo and npm run commands.** The project has native dependencies (libdatachannel, etc.) that require the nix environment.
 
 ```bash
 # Correct - always prefix with nix develop
@@ -174,11 +174,12 @@ Each migration step should verify:
 ## Key Dependencies
 
 ```toml
-holo_hash = "0.6.0"              # Hash types
-holochain_types = "0.6.0"        # Core Holochain types
-holochain_p2p = "0.6.0"          # P2P/Kitsune semantic layer
-kitsune2_api = "0.3.0"           # Kitsune2 API types
-kitsune2_core = "0.3.0"          # Kitsune2 implementations
+holo_hash = "0.6.1-rc.0"              # Hash types
+holochain_types = "0.6.1-rc.0"        # Core Holochain types
+holochain_p2p = "0.6.1-rc.0"          # P2P/Kitsune semantic layer
+kitsune2_api = "0.4.0-dev.2"          # Kitsune2 API types
+kitsune2_core = "0.4.0-dev.2"         # Kitsune2 implementations
+kitsune2_transport_iroh = "0.4.0-dev.2"  # Iroh transport (replaces tx5/webrtc)
 ```
 
 ---

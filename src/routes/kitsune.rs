@@ -37,7 +37,7 @@ pub struct KitsuneState {
     /// Bootstrap server URL if configured
     pub bootstrap_url: Option<String>,
     /// Signal server URL if configured
-    pub signal_url: Option<String>,
+    pub relay_url: Option<String>,
     /// The Kitsune2 instance (None if not yet connected)
     pub kitsune: Option<DynKitsune>,
 }
@@ -50,7 +50,7 @@ pub struct NetworkStatus {
     /// Bootstrap server URL if configured
     pub bootstrap_url: Option<String>,
     /// Signal server URL if configured
-    pub signal_url: Option<String>,
+    pub relay_url: Option<String>,
     /// Number of known peers across all spaces
     pub total_peers: usize,
     /// Number of active spaces (DNAs)
@@ -208,7 +208,7 @@ async fn get_network_status(
     Ok(Json(NetworkStatus {
         connected: state.enabled && state.kitsune.is_some(),
         bootstrap_url: state.bootstrap_url.clone(),
-        signal_url: state.signal_url.clone(),
+        relay_url: state.relay_url.clone(),
         total_peers,
         active_spaces,
         full_arc_peers,

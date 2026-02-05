@@ -19,19 +19,19 @@ clap = { version = "4", features = ["derive", "env"] }
 ed25519-dalek = "2"
 futures = "0.3"
 hex = "0.4"
-holo_hash = { version = "0.6.0", features = ["hashing", "encoding"] }
-holochain_client = "0.8.0"
-holochain_conductor_api = "0.6.0"
-holochain_serialized_bytes = "0.0"
-holochain_types = "0.6.0"
-holochain_zome_types = "0.6.0"
-holochain_websocket = "0.6.0"
-holochain_p2p = "0.6.0"
-kitsune2 = { version = "0.3.0", default-features = false, features = ["datachannel-vendored"] }
-kitsune2_api = "0.3.0"
-kitsune2_core = "0.3.0"
-kitsune2_gossip = "0.3.0"
-kitsune2_transport_tx5 = "0.3.0"
+holo_hash = { version = "0.6.1-rc.0", features = ["hashing", "encoding", "kitsune2"] }
+holochain_client = "0.8.1-rc.0"
+holochain_conductor_api = "0.6.1-rc.0"
+holochain_serialized_bytes = "=0.0.56"
+holochain_types = "0.6.1-rc.0"
+holochain_zome_types = "0.6.1-rc.0"
+holochain_websocket = "0.6.1-rc.0"
+holochain_p2p = { version = "0.6.1-rc.0", default-features = false, features = ["transport-iroh"] }
+kitsune2 = { version = "0.4.0-dev.2", default-features = false, features = ["transport-iroh"] }
+kitsune2_api = "0.4.0-dev.2"
+kitsune2_core = "0.4.0-dev.2"
+kitsune2_gossip = "0.4.0-dev.2"
+kitsune2_transport_iroh = { version = "0.4.0-dev.2", default-features = false }
 bytes = "1"
 rmp-serde = "1"
 rand = "0.9"

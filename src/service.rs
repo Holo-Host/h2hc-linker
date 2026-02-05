@@ -73,8 +73,8 @@ impl HcMembraneService {
             if let Some(ref bootstrap_url) = config.bootstrap_url {
                 builder = builder.with_bootstrap_url(bootstrap_url);
             }
-            if let Some(ref signal_url) = config.signal_url {
-                builder = builder.with_signal_url(signal_url);
+            if let Some(ref relay_url) = config.relay_url {
+                builder = builder.with_relay_url(relay_url);
             }
 
             match builder.build().await {
@@ -115,8 +115,8 @@ impl HcMembraneService {
             if let Some(ref bootstrap_url) = config.bootstrap_url {
                 builder = builder.with_bootstrap_url(bootstrap_url);
             }
-            if let Some(ref signal_url) = config.signal_url {
-                builder = builder.with_signal_url(signal_url);
+            if let Some(ref relay_url) = config.relay_url {
+                builder = builder.with_relay_url(relay_url);
             }
 
             match builder.build().await {
@@ -140,7 +140,7 @@ impl HcMembraneService {
         let kitsune_state = Arc::new(KitsuneState {
             enabled: config.kitsune_enabled(),
             bootstrap_url: config.bootstrap_url.clone(),
-            signal_url: config.signal_url.clone(),
+            relay_url: config.relay_url.clone(),
             kitsune,
         });
 

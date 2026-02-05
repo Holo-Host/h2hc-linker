@@ -7,8 +7,8 @@
 
 use bytes::Bytes;
 use kitsune2_api::{
-    BoxFut, DynKitsune, DynSpaceHandler, K2Error, K2Result, KitsuneHandler, SpaceHandler, SpaceId,
-    Url,
+    BoxFut, Config, DynKitsune, DynSpaceHandler, K2Error, K2Result, KitsuneHandler, SpaceHandler,
+    SpaceId, Url,
 };
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -21,7 +21,11 @@ use tracing::{debug, info};
 pub struct MinimalKitsuneHandler;
 
 impl KitsuneHandler for MinimalKitsuneHandler {
-    fn create_space(&self, space_id: SpaceId) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
+    fn create_space(
+        &self,
+        space_id: SpaceId,
+        _config: Option<&Config>,
+    ) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
         Box::pin(async move {
             info!(?space_id, "Creating minimal space handler");
             let handler: DynSpaceHandler = Arc::new(MinimalSpaceHandler { space_id });
@@ -38,10 +42,9 @@ impl KitsuneHandler for MinimalKitsuneHandler {
         debug!(%peer, ?reason, "Peer disconnected");
     }
 
-    fn preflight_gather_outgoing(&self, peer_url: Url) -> BoxFut<'_, K2Result<Bytes>> {
+    fn preflight_gather_outgoing(&self, _peer_url: Url) -> BoxFut<'_, K2Result<Bytes>> {
         Box::pin(async move {
             // Create a minimal preflight message
-            // The preflight format is: proto_ver (u8) + reserved bytes
             // Protocol version 2 is required for compatibility with Holochain 0.6
             let mut preflight = Vec::with_capacity(64);
 
@@ -62,7 +65,7 @@ impl KitsuneHandler for MinimalKitsuneHandler {
             msg.serialize(&mut Serializer::new(&mut preflight))
                 .map_err(|e| K2Error::other(format!("Failed to encode preflight: {e}")))?;
 
-            debug!(%peer_url, "Sending preflight");
+            debug!("Sending preflight");
             Ok(Bytes::from(preflight))
         })
     }
@@ -128,13 +131,13 @@ impl SpaceHandler for MinimalSpaceHandler {
 /// ```ignore
 /// let kitsune = KitsuneBuilder::new()
 ///     .with_bootstrap_url("https://bootstrap.example.com")
-///     .with_signal_url("wss://signal.example.com")
+///     .with_relay_url("https://relay.example.com")
 ///     .build()
 ///     .await?;
 /// ```
 pub struct KitsuneBuilder {
     bootstrap_url: Option<String>,
-    signal_url: Option<String>,
+    relay_url: Option<String>,
 }
 
 impl Default for KitsuneBuilder {
@@ -148,7 +151,7 @@ impl KitsuneBuilder {
     pub fn new() -> Self {
         Self {
             bootstrap_url: None,
-            signal_url: None,
+            relay_url: None,
         }
     }
 
@@ -158,17 +161,19 @@ impl KitsuneBuilder {
         self
     }
 
-    /// Set the signal server URL (for tx5 transport).
-    pub fn with_signal_url(mut self, url: impl Into<String>) -> Self {
-        self.signal_url = Some(url.into());
+    /// Set the relay server URL (for iroh transport).
+    pub fn with_relay_url(mut self, url: impl Into<String>) -> Self {
+        self.relay_url = Some(url.into());
         self
     }
 
     /// Build the Kitsune2 instance.
     pub async fn build(self) -> Result<DynKitsune, Box<dyn std::error::Error + Send + Sync>> {
         use kitsune2::default_builder;
-        use kitsune2_core::factories::config::{CoreBootstrapConfig, CoreBootstrapModConfig};
-        use kitsune2_transport_tx5::config::{Tx5TransportConfig, Tx5TransportModConfig};
+        use kitsune2_core::factories::{
+            CoreBootstrapConfig, CoreBootstrapModConfig, CoreSpaceConfig, CoreSpaceModConfig,
+        };
+        use kitsune2_transport_iroh::{IrohTransportConfig, IrohTransportModConfig};
 
         let builder = default_builder().with_default_config()?;
 
@@ -177,35 +182,32 @@ impl KitsuneBuilder {
             info!(%bootstrap_url, "Configuring bootstrap server");
             builder.config.set_module_config(&CoreBootstrapModConfig {
                 core_bootstrap: CoreBootstrapConfig {
-                    server_url: bootstrap_url,
+                    server_url: Some(bootstrap_url),
+                    backoff_max_ms: 10000,
                     ..Default::default()
                 },
             })?;
         }
 
-        // Configure signal server with STUN servers for WebRTC
-        if let Some(signal_url) = self.signal_url {
-            use kitsune2_transport_tx5::{IceServers, WebRtcConfig};
+        // Configure core space settings (matching conductor settings)
+        builder.config.set_module_config(&CoreSpaceModConfig {
+            core_space: CoreSpaceConfig {
+                re_sign_expire_time_ms: 10000,
+                re_sign_freq_ms: 10000,
+                ..Default::default()
+            },
+        })?;
 
-            info!(%signal_url, "Configuring signal server");
-            builder.config.set_module_config(&Tx5TransportModConfig {
-                tx5_transport: Tx5TransportConfig {
-                    server_url: signal_url,
-                    signal_allow_plain_text: true, // TODO: configure for production
-                    webrtc_config: WebRtcConfig {
-                        ice_servers: vec![IceServers {
-                            urls: vec![
-                                "stun:stun.l.google.com:19302".to_string(),
-                                "stun:stun1.l.google.com:19302".to_string(),
-                            ],
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            })?;
-        }
+        // Configure iroh transport
+        let iroh_config = IrohTransportConfig {
+            relay_allow_plain_text: true,
+            relay_url: self.relay_url,
+            ..Default::default()
+        };
+        info!(?iroh_config.relay_url, "Configuring iroh transport");
+        builder.config.set_module_config(&IrohTransportModConfig {
+            iroh_transport: iroh_config,
+        })?;
 
         // Build and register minimal handler
         let kitsune = builder.build().await?;
@@ -225,10 +227,10 @@ mod tests {
     fn test_builder_creation() {
         let builder = KitsuneBuilder::new()
             .with_bootstrap_url("https://bootstrap.example.com")
-            .with_signal_url("wss://signal.example.com");
+            .with_relay_url("https://relay.example.com");
 
         assert!(builder.bootstrap_url.is_some());
-        assert!(builder.signal_url.is_some());
+        assert!(builder.relay_url.is_some());
     }
 
     #[test]

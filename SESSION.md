@@ -1,13 +1,13 @@
 # Current Session
 
-**Last Updated**: 2026-01-29
-**Current Step**: M4 RESOLVED - Direct wire protocol WORKING, e2e test infrastructure fixed
+**Last Updated**: 2026-02-05
+**Current Step**: M4.1 - Preflight Agent Info (kitsune2 0.4.0-dev.2 + iroh)
 
 ---
 
 ## Summary
 
-The direct kitsune2 wire protocol is confirmed working. E2E test infrastructure has been fixed to properly support ziptest hApp.
+Updated hc-membrane to use kitsune2 0.4.0-dev.2 with iroh transport, matching Holochain 0.6.1-rc.0. Added PreflightCache to include registered agent infos in preflight messages, enabling conductor authorization.
 
 ---
 
@@ -15,46 +15,74 @@ The direct kitsune2 wire protocol is confirmed working. E2E test infrastructure 
 
 | Feature | Status | Notes |
 |---------|--------|-------|
+| Kitsune2 version | ✅ 0.4.0-dev.2 | Matching Holochain 0.6.1-rc.0 |
+| Transport | ✅ iroh | Replaced tx5/webrtc |
+| Holochain deps | ✅ 0.6.1-rc.0 | All holochain crates updated |
 | Direct wire protocol | ✅ WORKING | GetReq/GetLinksReq/GetRes/GetLinksRes all work |
-| conductor-dht mode | ✅ Works | Fallback still available |
+| Preflight with agents | ✅ WORKING | PreflightCache includes registered agent infos |
+| conductor-dht mode | ✅ Works | Fallback still available (feature flag) |
 | Signal forwarding | ✅ Works | Conductor → Gateway via kitsune2 |
 | Publishing | ✅ Works | Via kitsune2 publish mechanism |
-| E2E Test Infrastructure | ✅ Fixed | Ziptest UI server auto-starts, fixture1 tests skip for ziptest |
-| E2E Multi-Agent Test | ❌ Failing | Agent visibility timeout (network issue) |
+| Unit tests | ✅ 44 passing | All tests pass |
 
 ---
 
-## E2E Test Fixes (2026-01-29)
+## Recent Work (2026-02-05): Preflight Agent Info
 
-### Problem
-Tests designed for `fixture1` hApp were failing when run with `ziptest` because ziptest has different zome names (`ziptest` instead of `coordinator1`/`dht_util`).
+### Problem Solved
+Conductors were rejecting messages from gateway because the preflight didn't include agent infos for registered browser agents. Conductors require agent infos in preflight to authorize message handling.
 
 ### Solution
-1. **Added skip logic** to fixture1-specific tests:
-   - `cascade.test.ts` - Skips when `appId === 'ziptest'`
-   - `dht-ops.test.ts` - Skips when `appId === 'ziptest'`
-   - `signals.test.ts` - Skips when `appId === 'ziptest'`
+Added `PreflightCache` and `BootstrapWrapper` pattern (modeled after `holochain_p2p::spawn::actor::BootWrap`):
 
-2. **Added ziptest UI server** to `e2e-test-setup.sh`:
-   - Starts `python3 -m http.server 8081 -d dist` from `../ziptest/ui/`
-   - Auto-starts when using `--happ=ziptest`
-   - Shows in status as "Ziptest UI: RUNNING on port 8081"
+1. **PreflightCache** (`src/wire_preflight.rs`):
+   - Shared cache of `AgentInfoSigned` from all registered agents
+   - Updates when kitsune2 publishes agent info via `Bootstrap::put()`
+   - Encodes preflight message with protocol version and agent list
 
-### Test Results
-```
-13 tests skipped (fixture1-specific)
-1 test failing (ziptest multi-agent - agent visibility timeout)
-```
+2. **BootstrapWrapperFactory** (`src/wire_preflight.rs`):
+   - Wraps the original BootstrapFactory
+   - Intercepts `put()` calls to capture agent infos
+   - Multiple spaces share the same PreflightCache
+
+3. **KitsuneProxy integration** (`src/gateway_kitsune.rs`):
+   - Uses PreflightCache in `preflight_gather_outgoing()`
+   - Logs preflight exchanges with conductor
+
+### Uncommitted Changes (hc-membrane)
+
+| File | Change |
+|------|--------|
+| `Cargo.toml` | Dependencies updated for 0.6.1-rc.0 |
+| `Cargo.lock` | Lockfile updated |
+| `flake.lock` | Updated for holonix main-0.6 |
+| `src/wire_preflight.rs` | Added PreflightCache, BootstrapWrapper, BootstrapWrapperFactory |
+| `src/gateway_kitsune.rs` | Integrated preflight_cache, updated KitsuneProxy |
+| `src/kitsune.rs` | API updates for kitsune2 0.4.x |
+| `src/service.rs` | Pass bootstrap wrapper factory to kitsune builder |
+| `src/config.rs` | relay_url config (renamed from signal_url) |
+| `src/routes/kitsune.rs` | Minor updates |
+| `STEPS/index.md` | Updated M4 status |
+| `STEPS/M4_STATUS.md` | Updated status documentation |
+
+---
+
+## Test Results (2026-02-05)
+
+With ziptest + membrane:
+- ✅ Both browser agents register with gateway
+- ✅ Gateway exchanges preflights with both conductors
+- ✅ Preflights include 2 agent infos (both browser agents)
+- ✅ Conductors grant access to gateway URLs
+- ✅ Profiles published to both conductors
+- ✅ get_links returns correct data (both profiles found)
+- ⚠️ One browser window shows other agent's profile
+- ❌ Second browser window times out waiting for "active" agent
 
 ### Remaining Issue
-The `ziptest.test.ts` multi-agent test times out at "Timeout waiting for active agent after 90000ms".
-
-This means:
-- Profiles are created successfully
-- UI is loading correctly
-- But agents can't see each other as "active" (pings not being delivered)
-
-This is a **network/signal routing issue**, not a test infrastructure issue. The agents need to ping each other via remote signals to appear active, and those pings aren't being delivered.
+The "active" status detection in ziptest UI relies on ping/signal responses between agents. One window sees the other agent but may mark it as "inactive" due to missing ping responses. This could be:
+1. Timing issue - need to wait longer for agent discovery
+2. Signal relay issue - gateway may not be relaying browser-to-browser signals
 
 ---
 
@@ -63,42 +91,49 @@ This is a **network/signal routing issue**, not a test infrastructure issue. The
 ```bash
 # Build hc-membrane (direct mode, default)
 cd /home/eric/code/metacurrency/holochain/hc-membrane
-nix develop --command cargo build --release
+nix develop -c cargo build --release
 
-# Run e2e tests with hc-membrane
+# Run unit tests
+nix develop -c cargo test
+
+# Run e2e tests with hc-membrane (from fishy repo)
 cd /home/eric/code/metacurrency/holochain/fishy
-nix develop --command npm run e2e -- --happ=ziptest --gateway=membrane
+npm run e2e:env -- start --happ=ziptest --gateway=membrane
+npm run e2e:test
 
 # With debug logging
-RUST_LOG=hc_membrane=info nix develop --command npm run e2e -- --happ=ziptest --gateway=membrane
+RUST_LOG=hc_membrane=debug npm run e2e:env -- start --happ=ziptest --gateway=membrane
 ```
-
----
-
-## Files Modified (fishy repo)
-
-| File | Change |
-|------|--------|
-| `packages/e2e/tests/cascade.test.ts` | Skip for ziptest |
-| `packages/e2e/tests/dht-ops.test.ts` | Skip for ziptest |
-| `packages/e2e/tests/signals.test.ts` | Skip for ziptest |
-| `scripts/e2e-test-setup.sh` | Add ziptest UI server start/stop |
 
 ---
 
 ## Next Steps
 
-1. **Investigate agent visibility issue**: Why can't the two browser agents see each other as active?
-   - Check if pings (remote signals) are being sent
-   - Check if gateway is forwarding signals between agents
-   - Check conductor logs for signal delivery
+1. **Diagnose "active" agent detection issue**:
+   - Check if browser agents send pings (remote signals) to each other
+   - Check if gateway forwards browser-to-browser signals
+   - Check ziptest UI logic for "active" status
 
-2. **Consider**: The two agents might be on different conductors with different agent keys - verify gossip is working between them
+2. **Possible fix**: Add signal relay between browser agents through gateway
+
+3. **After e2e passes**: Commit all changes and update documentation
+
+---
+
+## Coordination with fishy
+
+This work is done in coordination with the fishy repo. Key fishy changes:
+- `packages/core/src/network/sync-xhr-service.ts` - WireLinkOps dual-format parsing
+- `packages/extension/src/offscreen/ribosome-worker.ts` - Mirror parsing
+- `packages/e2e/src/environment.ts` - Gateway config for membrane mode
+- `scripts/e2e-test-setup.sh` - Added --gateway option, quic transport
+
+**fishy status**: See `/home/eric/code/metacurrency/holochain/fishy/SESSION.md`
 
 ---
 
 ## Quick Links
 
-- [M4 Status](./STEPS/M4_STATUS.md) - Direct wire protocol confirmed working
+- [M4 Status](./STEPS/M4_STATUS.md) - Direct wire protocol status
 - [Step Registry](./STEPS/index.md) - All step statuses
 - [Architecture](./ARCHITECTURE.md) - System architecture

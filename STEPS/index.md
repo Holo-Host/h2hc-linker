@@ -13,7 +13,8 @@
 | M2d | ✅ | DHT Publish Endpoint |
 | M2e | ✅ | Zome Call Endpoint |
 | M3 | ✅ | Add Kitsune liveness endpoints |
-| M4 | ❌ | Direct DHT Operations via Kitsune2 (BLOCKED - wire protocol not working) |
+| M4 | ✅ | Direct DHT Operations via Kitsune2 (upgraded to 0.4.0-dev.2 + iroh) |
+| M4.1 | ⏳ | Preflight Agent Info + E2E Validation |
 | M5 | 📋 | Migrate op construction to gateway |
 | M6 | 📋 | Remove conductor dependency |
 | M7 | 📋 | Deprecate hc-http-gw-fork |
@@ -107,11 +108,13 @@ Implementation:
 - ⚠️ Full ziptest requires M2 (DHT endpoints not yet implemented)
 
 ### Step M4: Direct DHT Operations via Kitsune2
-**Status**: ❌ BLOCKED
+**Status**: ✅ Complete (upgraded to kitsune2 0.4.0-dev.2 + iroh transport)
 **Details**: [M4_STATUS.md](./M4_STATUS.md)
 
-Code complete but direct wire protocol does not work - conductors don't respond:
+Direct wire protocol working with kitsune2 0.4.0-dev.2:
 
+- ✅ Upgraded to kitsune2 0.4.0-dev.2 (matching Holochain 0.6.1-rc.0)
+- ✅ Switched from tx5/webrtc to iroh transport
 - ✅ Created `DhtQuery` module (`src/dht_query.rs`)
   - `PendingDhtResponses` for shared response routing
   - `DhtQuery.get()` and `DhtQuery.get_links()` via wire protocol
@@ -121,10 +124,33 @@ Code complete but direct wire protocol does not work - conductors don't respond:
 - ✅ Feature-flagged DHT route implementations
 - ✅ 44 unit tests passing
 - ✅ Both build modes compile
-- ❌ **Direct mode**: Conductors do not respond to GetReq/GetLinksReq - all queries timeout
-- ✅ **conductor-dht mode**: Works (uses zome calls)
+- ✅ **Direct mode**: Working with iroh transport
+- ✅ **conductor-dht mode**: Still available as fallback
 
-**Workaround**: Build with `--features conductor-dht` until direct wire protocol is fixed
+### Step M4.1: Preflight Agent Info + E2E Validation
+**Status**: ⏳ In Progress (Partial Success)
+**Details**: [M4_STATUS.md](./M4_STATUS.md)
+
+Added PreflightCache to include registered agent infos in preflight messages:
+
+- ✅ Added `PreflightCache` (`src/wire_preflight.rs`)
+  - Shared cache of `AgentInfoSigned` from all registered agents
+  - Updates when kitsune2 publishes agent info via `Bootstrap::put()`
+  - Encodes preflight message with protocol version and agent list
+- ✅ Added `BootstrapWrapperFactory` (`src/wire_preflight.rs`)
+  - Wraps original BootstrapFactory to intercept `put()` calls
+  - Multiple spaces share the same PreflightCache
+- ✅ Integrated `preflight_cache` into `KitsuneProxy`
+- ✅ Gateway exchanges preflights with both conductors
+- ✅ Conductors grant access to gateway URLs
+- ✅ Profiles published and retrieved correctly
+- ⚠️ **E2E Test**: One browser sees other's profile, but second browser times out
+- ❌ **Remaining Issue**: "Active" agent detection in ziptest UI
+
+**Next Steps**:
+1. Diagnose why one browser doesn't see "active" agents
+2. Check browser-to-browser signal relay through gateway
+3. After fix, commit all changes
 
 ### Step M5: Migrate op construction to gateway
 **Status**: 📋 Planned
