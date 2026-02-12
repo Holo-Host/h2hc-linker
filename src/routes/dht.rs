@@ -773,3 +773,440 @@ fn wire_link_ops_to_links(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use holochain_types::action::{
+        WireCreate, WireDelete, WireNewEntryAction, WireUpdate, WireUpdateRelationship,
+    };
+    use holochain_types::dht_op::WireOps;
+    use holochain_types::entry::{EntryData, WireEntryOps};
+    use holochain_types::prelude::*;
+    use holochain_types::record::WireRecordOps;
+    use holochain_zome_types::judged::Judged;
+
+    use super::{wire_entry_ops_to_details, wire_ops_to_details_json, wire_record_ops_to_details};
+
+    fn test_agent() -> AgentPubKey {
+        AgentPubKey::from_raw_32(vec![1; 32])
+    }
+
+    fn test_entry_hash() -> EntryHash {
+        EntryHash::from_raw_32(vec![2; 32])
+    }
+
+    fn test_action_hash() -> ActionHash {
+        ActionHash::from_raw_32(vec![3; 32])
+    }
+
+    fn test_prev_action() -> ActionHash {
+        ActionHash::from_raw_32(vec![4; 32])
+    }
+
+    fn test_signature() -> Signature {
+        Signature::from([0xaa; 64])
+    }
+
+    fn test_entry_type() -> EntryType {
+        EntryType::App(AppEntryDef {
+            entry_index: 0.into(),
+            zome_index: 0.into(),
+            visibility: EntryVisibility::Public,
+        })
+    }
+
+    fn test_entry() -> Entry {
+        let entry_bytes = UnsafeBytes::from(vec![1u8, 2, 3]);
+        Entry::App(AppEntryBytes(SerializedBytes::from(entry_bytes)))
+    }
+
+    fn test_create_action() -> Action {
+        Action::Create(Create {
+            author: test_agent(),
+            timestamp: Timestamp::from_micros(1_000_000),
+            action_seq: 5,
+            prev_action: test_prev_action(),
+            entry_type: test_entry_type(),
+            entry_hash: test_entry_hash(),
+            weight: EntryRateWeight::default(),
+        })
+    }
+
+    fn test_wire_create() -> WireCreate {
+        WireCreate {
+            timestamp: Timestamp::from_micros(1_000_000),
+            author: test_agent(),
+            action_seq: 5,
+            prev_action: test_prev_action(),
+            signature: test_signature(),
+            weight: EntryRateWeight::default(),
+        }
+    }
+
+    fn test_wire_delete() -> WireDelete {
+        WireDelete {
+            delete: Delete {
+                author: test_agent(),
+                timestamp: Timestamp::from_micros(2_000_000),
+                action_seq: 6,
+                prev_action: test_action_hash(),
+                deletes_address: test_action_hash(),
+                deletes_entry_address: test_entry_hash(),
+                weight: RateWeight::default(),
+            },
+            signature: Signature::from([0xbb; 64]),
+        }
+    }
+
+    fn test_wire_update_relationship() -> WireUpdateRelationship {
+        WireUpdateRelationship {
+            timestamp: Timestamp::from_micros(2_000_000),
+            author: test_agent(),
+            action_seq: 6,
+            prev_action: test_action_hash(),
+            original_action_address: test_action_hash(),
+            new_entry_address: EntryHash::from_raw_32(vec![5; 32]),
+            new_entry_type: test_entry_type(),
+            signature: Signature::from([0xcc; 64]),
+            weight: EntryRateWeight::default(),
+        }
+    }
+
+    // ========================================================================
+    // wire_record_ops_to_details tests
+    // ========================================================================
+
+    #[test]
+    fn test_wire_record_ops_to_details_basic() {
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(test_entry()),
+        };
+
+        let result = wire_record_ops_to_details(&record_ops);
+
+        let obj = result.as_object().expect("should be object");
+        assert_eq!(obj["type"], "Record");
+
+        let content = &obj["content"];
+        assert!(content["record"].is_object());
+        assert_eq!(content["validation_status"], "Valid");
+        assert!(content["deletes"].as_array().unwrap().is_empty());
+        assert!(content["updates"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_wire_record_ops_to_details_no_action_returns_null() {
+        let record_ops = WireRecordOps {
+            action: None,
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        };
+
+        let result = wire_record_ops_to_details(&record_ops);
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_wire_record_ops_to_details_with_deletes() {
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![Judged::valid(test_wire_delete())],
+            updates: vec![],
+            entry: Some(test_entry()),
+        };
+
+        let result = wire_record_ops_to_details(&record_ops);
+
+        let content = &result["content"];
+        let deletes = content["deletes"].as_array().unwrap();
+        assert_eq!(deletes.len(), 1);
+    }
+
+    #[test]
+    fn test_wire_record_ops_to_details_with_updates() {
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![],
+            updates: vec![Judged::valid(test_wire_update_relationship())],
+            entry: Some(test_entry()),
+        };
+
+        let result = wire_record_ops_to_details(&record_ops);
+
+        let content = &result["content"];
+        let updates = content["updates"].as_array().unwrap();
+        assert_eq!(updates.len(), 1);
+    }
+
+    #[test]
+    fn test_wire_record_ops_to_details_no_entry() {
+        // Record with action but no entry (e.g., Delete action)
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        };
+
+        let result = wire_record_ops_to_details(&record_ops);
+
+        // Should still produce valid Details::Record with null entry in the record
+        let obj = result.as_object().expect("should be object");
+        assert_eq!(obj["type"], "Record");
+    }
+
+    // ========================================================================
+    // wire_entry_ops_to_details tests
+    // ========================================================================
+
+    #[test]
+    fn test_wire_entry_ops_to_details_basic() {
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(WireNewEntryAction::Create(
+                test_wire_create(),
+            ))],
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+
+        let result = wire_entry_ops_to_details(&entry_ops);
+
+        let obj = result.as_object().expect("should be object");
+        assert_eq!(obj["type"], "Entry");
+
+        let content = &obj["content"];
+        assert!(content["entry"].is_object());
+        assert_eq!(content["actions"].as_array().unwrap().len(), 1);
+        assert!(content["rejected_actions"].as_array().unwrap().is_empty());
+        assert!(content["deletes"].as_array().unwrap().is_empty());
+        assert!(content["updates"].as_array().unwrap().is_empty());
+        assert_eq!(content["entry_dht_status"], "Live");
+    }
+
+    #[test]
+    fn test_wire_entry_ops_to_details_no_entry_returns_null() {
+        let entry_ops = WireEntryOps {
+            creates: vec![],
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        };
+
+        let result = wire_entry_ops_to_details(&entry_ops);
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_wire_entry_ops_to_details_dead_status() {
+        let entry = test_entry();
+        let entry_hash = EntryHash::with_data_sync(&entry);
+
+        let entry_data = EntryData {
+            entry,
+            entry_type: test_entry_type(),
+        };
+
+        // One create + one delete → Dead (deletes >= actions)
+        let wire_delete = WireDelete {
+            delete: Delete {
+                author: test_agent(),
+                timestamp: Timestamp::from_micros(2_000_000),
+                action_seq: 6,
+                prev_action: test_action_hash(),
+                deletes_address: test_action_hash(),
+                deletes_entry_address: entry_hash,
+                weight: RateWeight::default(),
+            },
+            signature: Signature::from([0xbb; 64]),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(WireNewEntryAction::Create(
+                test_wire_create(),
+            ))],
+            deletes: vec![Judged::valid(wire_delete)],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+
+        let result = wire_entry_ops_to_details(&entry_ops);
+
+        let content = &result["content"];
+        assert_eq!(content["entry_dht_status"], "Dead");
+    }
+
+    #[test]
+    fn test_wire_entry_ops_to_details_with_rejected_creates() {
+        let valid_create = test_wire_create();
+
+        let rejected_create = WireCreate {
+            timestamp: Timestamp::from_micros(2_000_000),
+            author: AgentPubKey::from_raw_32(vec![9; 32]),
+            action_seq: 3,
+            prev_action: ActionHash::from_raw_32(vec![8; 32]),
+            signature: Signature::from([0xcc; 64]),
+            weight: EntryRateWeight::default(),
+        };
+
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![
+                Judged::valid(WireNewEntryAction::Create(valid_create)),
+                Judged::new(
+                    WireNewEntryAction::Create(rejected_create),
+                    ValidationStatus::Rejected,
+                ),
+            ],
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+
+        let result = wire_entry_ops_to_details(&entry_ops);
+
+        let content = &result["content"];
+        assert_eq!(content["actions"].as_array().unwrap().len(), 1);
+        assert_eq!(content["rejected_actions"].as_array().unwrap().len(), 1);
+        assert_eq!(content["entry_dht_status"], "Live");
+    }
+
+    #[test]
+    fn test_wire_entry_ops_to_details_with_update_create() {
+        // Test WireNewEntryAction::Update variant (entry created via an update action)
+        let wire_update = WireUpdate {
+            timestamp: Timestamp::from_micros(1_000_000),
+            author: test_agent(),
+            action_seq: 5,
+            prev_action: test_prev_action(),
+            original_entry_address: EntryHash::from_raw_32(vec![7; 32]),
+            original_action_address: ActionHash::from_raw_32(vec![8; 32]),
+            signature: test_signature(),
+            weight: EntryRateWeight::default(),
+        };
+
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(WireNewEntryAction::Update(wire_update))],
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+
+        let result = wire_entry_ops_to_details(&entry_ops);
+
+        let obj = result.as_object().expect("should be object");
+        assert_eq!(obj["type"], "Entry");
+
+        let content = &obj["content"];
+        assert_eq!(content["actions"].as_array().unwrap().len(), 1);
+        assert_eq!(content["entry_dht_status"], "Live");
+    }
+
+    #[test]
+    fn test_wire_entry_ops_to_details_with_deletes_and_updates() {
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+
+        // Two creates, one delete (still Live), one update
+        let create2 = WireCreate {
+            timestamp: Timestamp::from_micros(1_500_000),
+            author: AgentPubKey::from_raw_32(vec![6; 32]),
+            action_seq: 3,
+            prev_action: ActionHash::from_raw_32(vec![7; 32]),
+            signature: Signature::from([0xdd; 64]),
+            weight: EntryRateWeight::default(),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![
+                Judged::valid(WireNewEntryAction::Create(test_wire_create())),
+                Judged::valid(WireNewEntryAction::Create(create2)),
+            ],
+            deletes: vec![Judged::valid(test_wire_delete())],
+            updates: vec![Judged::valid(test_wire_update_relationship())],
+            entry: Some(entry_data),
+        };
+
+        let result = wire_entry_ops_to_details(&entry_ops);
+
+        let content = &result["content"];
+        assert_eq!(content["actions"].as_array().unwrap().len(), 2);
+        assert_eq!(content["deletes"].as_array().unwrap().len(), 1);
+        assert_eq!(content["updates"].as_array().unwrap().len(), 1);
+        // 2 creates, 1 delete → still Live (deletes < actions)
+        assert_eq!(content["entry_dht_status"], "Live");
+    }
+
+    // ========================================================================
+    // wire_ops_to_details_json dispatcher tests
+    // ========================================================================
+
+    #[test]
+    fn test_wire_ops_to_details_json_record_variant() {
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(test_entry()),
+        };
+
+        let result = wire_ops_to_details_json(&WireOps::Record(record_ops));
+        assert_eq!(result["type"], "Record");
+    }
+
+    #[test]
+    fn test_wire_ops_to_details_json_entry_variant() {
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(WireNewEntryAction::Create(
+                test_wire_create(),
+            ))],
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+
+        let result = wire_ops_to_details_json(&WireOps::Entry(entry_ops));
+        assert_eq!(result["type"], "Entry");
+    }
+
+}
