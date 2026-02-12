@@ -8,9 +8,9 @@
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
-use holochain_types::prelude::{
-    ActionHash, AgentPubKey, AnyDhtHash, AnyLinkableHash, EntryHash, ExternalHash, ExternIO,
-};
+use holochain_types::prelude::{ActionHash, AgentPubKey, AnyDhtHash, AnyLinkableHash, EntryHash, ExternalHash};
+#[cfg(feature = "conductor-dht")]
+use holochain_types::prelude::ExternIO;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{HcMembraneError, HcMembraneResult};
@@ -25,6 +25,24 @@ use holochain_types::link::WireLinkKey;
 use holochain_types::prelude::{Action, CreateLink, LinkTag, LinkTypeFilter};
 #[cfg(not(feature = "conductor-dht"))]
 use holochain_zome_types::link::Link;
+
+// For wire_ops_to_details_json (default mode)
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::action::WireNewEntryAction;
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::dht_op::WireOps;
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::entry::WireEntryOps;
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::record::WireRecordOps;
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_zome_types::metadata::{Details, EntryDetails, EntryDhtStatus, RecordDetails};
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_types::prelude::ActionHashed;
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_zome_types::record::{Record, SignedActionHashed};
+#[cfg(not(feature = "conductor-dht"))]
+use holochain_zome_types::validate::ValidationStatus;
 
 // ============================================================================
 // Hash parsing helpers
@@ -204,7 +222,40 @@ pub async fn dht_get_record(
 /// GET /dht/{dna_hash}/details/{hash}
 ///
 /// Get details for a hash (including updates and deletes).
+///
+/// In default mode, this queries the DHT directly via kitsune2 and converts
+/// WireOps to the Details format matching Holochain's get_details return type.
+/// With `conductor-dht` feature, this uses the conductor's dht_util zome.
 #[tracing::instrument(skip(state))]
+#[cfg(not(feature = "conductor-dht"))]
+pub async fn dht_get_details(
+    Path(path): Path<RecordPath>,
+    State(state): State<AppState>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let dht_query = state
+        .dht_query
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let hash = parse_any_dht_hash(&path.hash)?;
+
+    let result = dht_query.get(&dna_hash, hash).await?;
+
+    match result {
+        Some(wire_ops) => {
+            let json_value = wire_ops_to_details_json(&wire_ops);
+            Ok(Json(json_value))
+        }
+        None => Ok(Json(serde_json::Value::Null)),
+    }
+}
+
+/// GET /dht/{dna_hash}/details/{hash}
+///
+/// Get details for a hash (conductor mode).
+#[tracing::instrument(skip(state))]
+#[cfg(feature = "conductor-dht")]
 pub async fn dht_get_details(
     Path(path): Path<RecordPath>,
     State(state): State<AppState>,
@@ -367,6 +418,71 @@ pub async fn dht_get_links(
     Ok(Json(json_value))
 }
 
+/// GET /dht/{dna_hash}/count_links
+///
+/// Count links from a base hash.
+///
+/// In default mode, this queries the DHT directly via kitsune2.
+/// Returns the count of matching links as a JSON number.
+#[tracing::instrument(skip(state))]
+#[cfg(not(feature = "conductor-dht"))]
+pub async fn dht_count_links(
+    Path(path): Path<LinksPath>,
+    Query(query): Query<LinksQuery>,
+    State(state): State<AppState>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let dht_query = state
+        .dht_query
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let base = parse_any_linkable_hash(&query.base)?;
+
+    let tag_prefix = if let Some(tag_str) = query.tag {
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &tag_str)
+            .map_err(|_| HcMembraneError::RequestMalformed("Invalid tag encoding".to_string()))?;
+        Some(LinkTag::new(bytes))
+    } else {
+        None
+    };
+
+    let type_query = match (query.zome_index, query.link_type) {
+        (Some(zome_idx), Some(link_type)) => {
+            LinkTypeFilter::single_type(zome_idx.into(), (link_type as u8).into())
+        }
+        (Some(zome_idx), None) => LinkTypeFilter::single_dep(zome_idx.into()),
+        (None, Some(_)) => {
+            return Err(HcMembraneError::RequestMalformed(
+                "zome_index is required when filtering by link type".to_string(),
+            ));
+        }
+        (None, None) => LinkTypeFilter::Types(Vec::new()),
+    };
+
+    let query = holochain_types::link::WireLinkQuery {
+        base,
+        link_type: type_query,
+        tag_prefix,
+        before: None,
+        after: None,
+        author: None,
+    };
+
+    let result = dht_query.count_links(&dna_hash, query).await?;
+
+    match result {
+        Some(count_response) => {
+            let json_value = serde_json::to_value(&count_response).unwrap_or_else(|e| {
+                tracing::warn!("Failed to serialize count_links response: {}", e);
+                serde_json::json!(0)
+            });
+            Ok(Json(json_value))
+        }
+        None => Ok(Json(serde_json::json!(0))),
+    }
+}
+
 // ============================================================================
 // Wire type to JSON conversion (for direct DHT mode)
 // ============================================================================
@@ -383,6 +499,220 @@ fn wire_ops_to_json(ops: &holochain_types::dht_op::WireOps) -> serde_json::Value
             serde_json::Value::Null
         }
     }
+}
+
+/// Convert WireOps to the Details JSON format matching Holochain's get_details return type.
+///
+/// WireOps are the condensed wire protocol format. This function reconstructs the full
+/// Details structure (adjacently tagged enum with {type, content}) that Holochain returns
+/// from get_details calls.
+#[cfg(not(feature = "conductor-dht"))]
+fn wire_ops_to_details_json(ops: &WireOps) -> serde_json::Value {
+    match ops {
+        WireOps::Record(record_ops) => wire_record_ops_to_details(record_ops),
+        WireOps::Entry(entry_ops) => wire_entry_ops_to_details(entry_ops),
+        WireOps::Warrant(_) => serde_json::Value::Null,
+    }
+}
+
+/// Convert WireRecordOps to Details::Record JSON.
+///
+/// Reconstructs the full Record (signed action + entry) and metadata (deletes, updates)
+/// from the condensed wire format.
+#[cfg(not(feature = "conductor-dht"))]
+fn wire_record_ops_to_details(record_ops: &WireRecordOps) -> serde_json::Value {
+    let judged_signed_action = match &record_ops.action {
+        Some(a) => a,
+        None => return serde_json::Value::Null,
+    };
+
+    let signed_action = &judged_signed_action.data;
+    let action: &Action = signed_action.data();
+    let signature = signed_action.signature().clone();
+
+    // Compute action hash and build SignedActionHashed
+    let action_hashed = ActionHashed::from_content_sync(action.clone());
+    let signed_action_hashed =
+        SignedActionHashed::with_presigned(action_hashed, signature);
+
+    // Build record with entry
+    let record = Record::new(signed_action_hashed, record_ops.entry.clone());
+
+    let validation_status = judged_signed_action
+        .status
+        .unwrap_or(ValidationStatus::Valid);
+
+    // Convert deletes: WireDelete → SignedActionHashed
+    let deletes: Vec<SignedActionHashed> = record_ops
+        .deletes
+        .iter()
+        .map(|d| {
+            let delete_action = Action::Delete(d.data.delete.clone());
+            let delete_hashed = ActionHashed::from_content_sync(delete_action);
+            SignedActionHashed::with_presigned(delete_hashed, d.data.signature.clone())
+        })
+        .collect();
+
+    // Convert updates: WireUpdateRelationship → SignedActionHashed
+    // Need the original entry address from the record's action
+    let original_entry_address = action.entry_data().map(|(eh, _)| eh.clone());
+    let updates: Vec<SignedActionHashed> = record_ops
+        .updates
+        .iter()
+        .filter_map(|u| {
+            let original_entry_addr = original_entry_address.clone()?;
+            let update = holochain_zome_types::action::Update {
+                author: u.data.author.clone(),
+                timestamp: u.data.timestamp,
+                action_seq: u.data.action_seq,
+                prev_action: u.data.prev_action.clone(),
+                original_action_address: u.data.original_action_address.clone(),
+                original_entry_address: original_entry_addr,
+                entry_type: u.data.new_entry_type.clone(),
+                entry_hash: u.data.new_entry_address.clone(),
+                weight: u.data.weight.clone(),
+            };
+            let update_action = Action::Update(update);
+            let update_hashed = ActionHashed::from_content_sync(update_action);
+            Some(SignedActionHashed::with_presigned(
+                update_hashed,
+                u.data.signature.clone(),
+            ))
+        })
+        .collect();
+
+    let record_details = RecordDetails {
+        record,
+        validation_status,
+        deletes,
+        updates,
+    };
+
+    let details = Details::Record(record_details);
+    serde_json::to_value(&details).unwrap_or(serde_json::Value::Null)
+}
+
+/// Convert WireEntryOps to Details::Entry JSON.
+///
+/// Reconstructs the full Entry details including all create actions, deletes, and updates
+/// from the condensed wire format. Entry data and entry type are shared across all creates.
+#[cfg(not(feature = "conductor-dht"))]
+fn wire_entry_ops_to_details(entry_ops: &WireEntryOps) -> serde_json::Value {
+    let entry_data = match &entry_ops.entry {
+        Some(ed) => ed,
+        None => return serde_json::Value::Null,
+    };
+
+    let entry = entry_data.entry.clone();
+    let entry_type = entry_data.entry_type.clone();
+
+    // Compute entry hash for reconstructing actions
+    let entry_hash = EntryHash::with_data_sync(&entry);
+
+    // Convert creates to SignedActionHashed, separating valid from rejected
+    let mut actions = Vec::new();
+    let mut rejected_actions = Vec::new();
+
+    for judged_create in &entry_ops.creates {
+        let (full_action, signature) = match &judged_create.data {
+            WireNewEntryAction::Create(wire_create) => {
+                let create = holochain_zome_types::action::Create {
+                    author: wire_create.author.clone(),
+                    timestamp: wire_create.timestamp,
+                    action_seq: wire_create.action_seq,
+                    prev_action: wire_create.prev_action.clone(),
+                    entry_type: entry_type.clone(),
+                    entry_hash: entry_hash.clone(),
+                    weight: wire_create.weight.clone(),
+                };
+                (Action::Create(create), wire_create.signature.clone())
+            }
+            WireNewEntryAction::Update(wire_update) => {
+                let update = holochain_zome_types::action::Update {
+                    author: wire_update.author.clone(),
+                    timestamp: wire_update.timestamp,
+                    action_seq: wire_update.action_seq,
+                    prev_action: wire_update.prev_action.clone(),
+                    original_entry_address: wire_update.original_entry_address.clone(),
+                    original_action_address: wire_update.original_action_address.clone(),
+                    entry_type: entry_type.clone(),
+                    entry_hash: entry_hash.clone(),
+                    weight: wire_update.weight.clone(),
+                };
+                (Action::Update(update), wire_update.signature.clone())
+            }
+        };
+
+        let action_hashed = ActionHashed::from_content_sync(full_action);
+        let signed_action_hashed =
+            SignedActionHashed::with_presigned(action_hashed, signature);
+
+        let is_valid = judged_create
+            .status
+            .map(|s| s == ValidationStatus::Valid)
+            .unwrap_or(true);
+
+        if is_valid {
+            actions.push(signed_action_hashed);
+        } else {
+            rejected_actions.push(signed_action_hashed);
+        }
+    }
+
+    // Convert deletes: WireDelete → SignedActionHashed
+    let deletes: Vec<SignedActionHashed> = entry_ops
+        .deletes
+        .iter()
+        .map(|d| {
+            let delete_action = Action::Delete(d.data.delete.clone());
+            let delete_hashed = ActionHashed::from_content_sync(delete_action);
+            SignedActionHashed::with_presigned(delete_hashed, d.data.signature.clone())
+        })
+        .collect();
+
+    // Convert updates: WireUpdateRelationship → SignedActionHashed
+    // For entry details, original_entry_address is the entry we're querying
+    let updates: Vec<SignedActionHashed> = entry_ops
+        .updates
+        .iter()
+        .map(|u| {
+            let update = holochain_zome_types::action::Update {
+                author: u.data.author.clone(),
+                timestamp: u.data.timestamp,
+                action_seq: u.data.action_seq,
+                prev_action: u.data.prev_action.clone(),
+                original_action_address: u.data.original_action_address.clone(),
+                original_entry_address: entry_hash.clone(),
+                entry_type: u.data.new_entry_type.clone(),
+                entry_hash: u.data.new_entry_address.clone(),
+                weight: u.data.weight.clone(),
+            };
+            let update_action = Action::Update(update);
+            let update_hashed = ActionHashed::from_content_sync(update_action);
+            SignedActionHashed::with_presigned(update_hashed, u.data.signature.clone())
+        })
+        .collect();
+
+    // Entry is Live if it has non-rejected creates and not all are deleted
+    let entry_dht_status = if !actions.is_empty() && deletes.len() < actions.len() {
+        EntryDhtStatus::Live
+    } else if !actions.is_empty() {
+        EntryDhtStatus::Dead
+    } else {
+        EntryDhtStatus::Live // Default to Live if no status info
+    };
+
+    let entry_details = EntryDetails {
+        entry,
+        actions,
+        rejected_actions,
+        deletes,
+        updates,
+        entry_dht_status,
+    };
+
+    let details = Details::Entry(entry_details);
+    serde_json::to_value(&details).unwrap_or(serde_json::Value::Null)
 }
 
 /// Convert WireLinkOps to Vec<Link> with properly computed ActionHash.

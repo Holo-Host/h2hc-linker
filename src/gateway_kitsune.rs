@@ -204,6 +204,9 @@ impl SpaceHandler for ProxySpaceHandler {
                         WireMessage::GetLinksRes { msg_id, .. } => {
                             info!(msg_id, ">>> Received GetLinksRes response");
                         }
+                        WireMessage::CountLinksRes { msg_id, .. } => {
+                            info!(msg_id, ">>> Received CountLinksRes response");
+                        }
                         WireMessage::ErrorRes { msg_id, error } => {
                             info!(msg_id, %error, ">>> Received ErrorRes response");
                         }
@@ -278,6 +281,7 @@ impl ProxySpaceHandler {
             // DHT query response messages - route to pending DhtQuery requests
             msg @ WireMessage::GetRes { .. }
             | msg @ WireMessage::GetLinksRes { .. }
+            | msg @ WireMessage::CountLinksRes { .. }
             | msg @ WireMessage::ErrorRes { .. } => {
                 let msg_id = msg.get_msg_id();
                 info!(

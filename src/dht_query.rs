@@ -26,7 +26,7 @@
 use holo_hash::AnyDhtHash;
 use holochain_p2p::WireMessage;
 use holochain_types::dht_op::WireOps;
-use holochain_types::link::{WireLinkKey, WireLinkOps};
+use holochain_types::link::{CountLinksResponse, WireLinkKey, WireLinkOps, WireLinkQuery};
 use holochain_types::prelude::{AgentPubKey, DnaHash};
 use kitsune2_api::{DynSpace, Url};
 use kitsune2_core::get_responsive_remote_agents_near_location;
@@ -297,6 +297,74 @@ impl DhtQuery {
                 }
                 Ok(Err(e)) => {
                     debug!(?e, "Peer query failed");
+                    if last_result.is_none() {
+                        last_result = Some(Err(e));
+                    }
+                }
+                Err(e) => {
+                    debug!(?e, "Task join error");
+                }
+            }
+        }
+
+        last_result.unwrap_or(Ok(None))
+    }
+
+    /// Count links from the DHT by base hash.
+    ///
+    /// Sends CountLinksReq to peers near the base hash location and returns
+    /// the first response.
+    pub async fn count_links(
+        &self,
+        dna_hash: &DnaHash,
+        query: WireLinkQuery,
+    ) -> HcMembraneResult<Option<CountLinksResponse>> {
+        let space = self
+            .gateway_kitsune
+            .get_or_create_space(dna_hash)
+            .await
+            .map_err(|e| HcMembraneError::Internal(e))?;
+
+        let loc = query.base.get_loc();
+        let agents = self.get_peers_for_location(&space, loc).await?;
+
+        if agents.is_empty() {
+            info!(dna = %dna_hash, loc, "No peers found for DHT location");
+            return Ok(None);
+        }
+
+        debug!(
+            dna = %dna_hash,
+            base = %query.base,
+            peer_count = agents.len(),
+            "Querying peers for count_links"
+        );
+
+        // Query peers in parallel, return first response
+        let mut handles = Vec::new();
+        for (agent, url) in agents.into_iter().take(PARALLEL_GET_AGENTS_COUNT) {
+            let space = space.clone();
+            let query = query.clone();
+            let pending = self.pending.clone();
+            let timeout = self.timeout;
+
+            handles.push(tokio::spawn(async move {
+                Self::send_count_links_request(space, agent, url, query, pending, timeout).await
+            }));
+        }
+
+        // Await all and return first success
+        let mut last_result = None;
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(Some(response))) => {
+                    return Ok(Some(response));
+                }
+                Ok(Ok(result)) => {
+                    last_result = Some(Ok(result));
+                }
+                Ok(Err(e)) => {
+                    debug!(?e, "Peer count_links query failed");
                     if last_result.is_none() {
                         last_result = Some(Err(e));
                     }
@@ -581,6 +649,88 @@ impl DhtQuery {
             }
             Err(_) => {
                 warn!(msg_id, timeout_secs = timeout.as_secs(), "GetLinks request TIMED OUT - no response received");
+                Err(HcMembraneError::Internal("Request timed out".to_string()))
+            }
+        }
+    }
+
+    /// Send a count_links request to a specific peer.
+    async fn send_count_links_request(
+        space: DynSpace,
+        to_agent: AgentPubKey,
+        to_url: Url,
+        query: WireLinkQuery,
+        pending: PendingDhtResponses,
+        timeout: Duration,
+    ) -> HcMembraneResult<Option<CountLinksResponse>> {
+        let (msg_id, req) = WireMessage::count_links_req(to_agent.clone(), query.clone());
+
+        info!(
+            msg_id,
+            %to_url,
+            %to_agent,
+            base = %query.base,
+            "Preparing CountLinksReq message"
+        );
+
+        let encoded = WireMessage::encode_batch(&[&req])
+            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+
+        // Register pending request
+        let (tx, rx) = oneshot::channel();
+        pending.register(msg_id, tx).await;
+
+        // Set up timeout to clean up pending request
+        let pending_cleanup = pending.clone();
+        let timeout_msg_id = msg_id;
+        tokio::spawn(async move {
+            tokio::time::sleep(timeout).await;
+            pending_cleanup.remove(timeout_msg_id).await;
+        });
+
+        // Send request
+        let send_start = std::time::Instant::now();
+        match space.send_notify(to_url.clone(), encoded).await {
+            Ok(()) => {
+                info!(
+                    msg_id,
+                    %to_url,
+                    send_elapsed_ms = send_start.elapsed().as_millis(),
+                    "CountLinksReq send_notify completed"
+                );
+            }
+            Err(e) => {
+                warn!(msg_id, %to_url, error = %e, "CountLinksReq send_notify FAILED");
+                return Err(HcMembraneError::Internal(format!(
+                    "Failed to send request: {e}"
+                )));
+            }
+        }
+
+        // Wait for response
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(WireMessage::CountLinksRes { response, .. })) => {
+                info!(msg_id, "Got CountLinksRes response");
+                Ok(Some(response))
+            }
+            Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
+                warn!(msg_id, %error, "Got ErrorRes for count_links");
+                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+            }
+            Ok(Ok(other)) => {
+                warn!(msg_id, ?other, "Got unexpected response type for count_links");
+                Err(HcMembraneError::Internal(format!(
+                    "Unexpected response: {other:?}"
+                )))
+            }
+            Ok(Err(_)) => {
+                warn!(msg_id, "Response channel closed (receiver dropped)");
+                Err(HcMembraneError::Internal(
+                    "Response channel closed".to_string(),
+                ))
+            }
+            Err(_) => {
+                warn!(msg_id, timeout_secs = timeout.as_secs(), "CountLinks request TIMED OUT");
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }
