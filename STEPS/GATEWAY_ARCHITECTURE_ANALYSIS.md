@@ -2,6 +2,14 @@
 
 > Analysis Date: January 2026
 > Related to: Fishy Browser Extension + hc-http-gw-fork
+>
+> **Implementation Note (February 2026)**: This is the original pre-implementation analysis. Several recommendations were revised during implementation. See [ARCHITECTURE.md](../ARCHITECTURE.md) for the current state, particularly the "Why Not holochain_p2p as Semantic Layer?" section which explains why the `HolochainP2pDna` trait was not used. Key divergences:
+>
+> - **holochain_p2p semantic layer** (sections 5, 8, 9): Not used as a trait. Wire types are imported but DHT queries use a custom `DhtQuery` module that drives kitsune2 directly. The `HolochainP2pDna` trait requires conductor-level storage infrastructure that a zero-arc gateway does not need.
+> - **Route prefix**: Implementation uses `/dht/*` instead of `/hc/*`.
+> - **Transport**: iroh/QUIC instead of tx5/WebRTC (kitsune2 0.4.0-dev.2 dropped tx5).
+> - **RPC unification** (sections 2, 3): Deferred. WebSocket + sync XHR kept as-is for now.
+> - **Endpoints**: entry, links/count, agent-activity, HTTP signal not yet implemented.
 
 ## Executive Summary
 

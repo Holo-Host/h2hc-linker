@@ -22,7 +22,7 @@
   - `holochain_types`: `DhtOp`, `Action`, `Entry`, `Record`, `SignedAction`
   - `kitsune2_api`: `AgentInfoSigned`, `SpaceId`, `StoredOp`, `OpId`
   - `holochain_conductor_api`: API types, app info types
-  - `holochain_p2p`: `WireMessage`, `WireOps`, `HolochainP2pDna` traits
+  - `holochain_p2p`: `WireMessage`, `WireOps`, `WireLinkOps` (wire types only, not the HolochainP2pDna trait)
 - **Do not recreate structs** that already exist in dependencies - find and use them
 - Use `#[serde(transparent)]` newtypes for domain-specific wrappers
 
@@ -47,23 +47,28 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
 │                         hc-membrane                                  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │ Holochain Semantic API (/hc/*)                               │   │
-│  │  GET  /hc/{dna}/record/{hash}    → get record by hash        │   │
-│  │  GET  /hc/{dna}/links            → get_links(base, type)     │   │
-│  │  POST /hc/{dna}/publish          → publish Record            │   │
+│  │ DHT Endpoints (/dht/*)                                       │   │
+│  │  GET  /dht/{dna}/record/{hash}   → get record by hash        │   │
+│  │  GET  /dht/{dna}/details/{hash}  → record + updates/deletes  │   │
+│  │  GET  /dht/{dna}/links           → get_links(base, type)     │   │
+│  │  POST /dht/{dna}/publish         → publish signed DhtOps     │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │ Kitsune Direct API (/k2/*)                                   │   │
-│  │  GET  /k2/{space}/peers          → list known peers          │   │
-│  │  GET  /k2/{space}/status         → network status            │   │
+│  │  GET  /k2/status                 → overall network status     │   │
+│  │  GET  /k2/peers                  → list all known peers       │   │
+│  │  GET  /k2/space/{id}/status      → space-specific status     │   │
+│  │  GET  /k2/space/{id}/peers       → peers in a space          │   │
+│  │  GET  /k2/space/{id}/local-agents → local agents             │   │
+│  │  GET  /k2/transport/stats        → transport statistics       │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │ holochain_p2p (semantic layer) + kitsune2 (network layer)    │   │
+│  │ DhtQuery (direct wire protocol) + kitsune2 (network layer)   │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────┬──────────────────────────────────┘
-                                   │ Kitsune2 P2P
+                                   │ Kitsune2 P2P (iroh/QUIC)
                                    ▼
                   ┌────────────────────────────────┐
                   │  DHT Authorities / Full Nodes  │
