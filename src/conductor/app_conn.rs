@@ -3,9 +3,8 @@
 use crate::conductor::AdminConn;
 use crate::error::{HcMembraneError, HcMembraneResult};
 use holochain_client::{
-    AppInfo, AppWebsocket, CellId, ClientAgentSigner, ConductorApiError, ConnectRequest,
-    ExternIO, GrantedFunctions, IssueAppAuthenticationTokenPayload, WebsocketConfig,
-    ZomeCallTarget,
+    AppInfo, AppWebsocket, CellId, ClientAgentSigner, ConductorApiError, ConnectRequest, ExternIO,
+    GrantedFunctions, IssueAppAuthenticationTokenPayload, WebsocketConfig, ZomeCallTarget,
 };
 use holochain_conductor_api::{AppStatusFilter, CellInfo};
 use holochain_types::dna::DnaHash;
@@ -85,10 +84,7 @@ impl AppConn {
     }
 
     /// Find an app that contains the specified DNA.
-    async fn find_app_with_dna(
-        &self,
-        dna_hash: &DnaHash,
-    ) -> HcMembraneResult<(AppInfo, CellId)> {
+    async fn find_app_with_dna(&self, dna_hash: &DnaHash) -> HcMembraneResult<(AppInfo, CellId)> {
         // Check cache first
         {
             let cache = self.app_info_cache.read().await;

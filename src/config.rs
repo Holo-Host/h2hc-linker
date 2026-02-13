@@ -47,6 +47,13 @@ pub struct Configuration {
 
     /// Timeout for zome calls
     pub zome_call_timeout: Duration,
+
+    /// Admin secret for authentication (from HC_MEMBRANE_ADMIN_SECRET)
+    /// When set, enables the auth layer.
+    pub admin_secret: Option<String>,
+
+    /// Session token TTL (from HC_MEMBRANE_SESSION_TTL_SECS, default 3600)
+    pub session_ttl: Duration,
 }
 
 impl Default for Configuration {
@@ -58,6 +65,8 @@ impl Default for Configuration {
             payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
             websocket: WebSocketConfig::default(),
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
+            admin_secret: None,
+            session_ttl: Duration::from_secs(3600),
         }
     }
 }
@@ -90,6 +99,14 @@ impl Configuration {
             config.zome_call_timeout = Duration::from_millis(timeout.parse()?);
         }
 
+        // Auth configuration
+        if let Ok(secret) = std::env::var("HC_MEMBRANE_ADMIN_SECRET") {
+            config.admin_secret = Some(secret);
+        }
+        if let Ok(ttl) = std::env::var("HC_MEMBRANE_SESSION_TTL_SECS") {
+            config.session_ttl = Duration::from_secs(ttl.parse()?);
+        }
+
         Ok(config)
     }
 
@@ -102,5 +119,36 @@ impl Configuration {
     /// Check if conductor integration is configured
     pub fn conductor_enabled(&self) -> bool {
         self.admin_socket_addr.is_some()
+    }
+
+    /// Check if authentication is enabled (admin secret is set)
+    pub fn auth_enabled(&self) -> bool {
+        self.admin_secret.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_auth_disabled() {
+        let config = Configuration::default();
+        assert!(!config.auth_enabled());
+        assert!(config.admin_secret.is_none());
+        assert_eq!(config.session_ttl, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_auth_enabled_with_secret() {
+        let mut config = Configuration::default();
+        config.admin_secret = Some("test-secret".to_string());
+        assert!(config.auth_enabled());
+    }
+
+    #[test]
+    fn test_session_ttl_default() {
+        let config = Configuration::default();
+        assert_eq!(config.session_ttl, Duration::from_secs(3600));
     }
 }

@@ -280,17 +280,20 @@ impl ProxySpaceHandler {
             | msg @ WireMessage::GetLinksRes { .. }
             | msg @ WireMessage::ErrorRes { .. } => {
                 let msg_id = msg.get_msg_id();
-                info!(
-                    ?msg_id,
-                    "Routing DHT response to pending request handler"
-                );
+                info!(?msg_id, "Routing DHT response to pending request handler");
                 let pending = self.pending_dht_responses.clone();
                 tokio::spawn(async move {
                     let routed = pending.route_response(msg).await;
                     if routed {
-                        info!(?msg_id, "Successfully routed DHT response to pending request");
+                        info!(
+                            ?msg_id,
+                            "Successfully routed DHT response to pending request"
+                        );
                     } else {
-                        warn!(?msg_id, "Failed to route DHT response - no matching pending request found");
+                        warn!(
+                            ?msg_id,
+                            "Failed to route DHT response - no matching pending request found"
+                        );
                     }
                 });
             }
@@ -694,7 +697,11 @@ impl GatewayKitsune {
 
             // First, check if target is a registered browser agent
             // If so, deliver directly via WebSocket (much faster than kitsune2)
-            if self.agent_proxy.is_registered(dna_hash, &target_agent).await {
+            if self
+                .agent_proxy
+                .is_registered(dna_hash, &target_agent)
+                .await
+            {
                 // Create signal payload for browser delivery
                 let signal_data = signal_to_b64(&ExternIO(signal.zome_call_params.clone()));
                 let server_msg = ServerMessage::Signal {
@@ -705,7 +712,11 @@ impl GatewayKitsune {
                     signal: signal_data,
                 };
 
-                if self.agent_proxy.send_signal(dna_hash, &target_agent, server_msg).await {
+                if self
+                    .agent_proxy
+                    .send_signal(dna_hash, &target_agent, server_msg)
+                    .await
+                {
                     debug!(%target_agent, "Delivered signal to browser agent via WebSocket");
                     success_count += 1;
                 } else {
@@ -740,7 +751,8 @@ impl GatewayKitsune {
             let extern_io = ExternIO(signal.zome_call_params);
             let signature = Signature::try_from(signal.signature.as_slice())
                 .unwrap_or_else(|_| Signature::from([0u8; 64]));
-            let wire_msg = WireMessage::remote_signal_evt(target_agent.clone(), extern_io, signature);
+            let wire_msg =
+                WireMessage::remote_signal_evt(target_agent.clone(), extern_io, signature);
 
             // Encode and send
             let encoded = match WireMessage::encode_batch(&[&wire_msg]) {
@@ -873,7 +885,11 @@ impl GatewayKitsune {
         // Publish to each peer
         let mut success_count = 0;
         for url in urls {
-            match space.publish().publish_ops(op_ids.clone(), url.clone()).await {
+            match space
+                .publish()
+                .publish_ops(op_ids.clone(), url.clone())
+                .await
+            {
                 Ok(()) => {
                     success_count += 1;
                     debug!(%url, "Published ops to peer");

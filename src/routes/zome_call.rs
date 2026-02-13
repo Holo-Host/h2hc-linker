@@ -72,9 +72,10 @@ pub async fn zome_call(
     );
 
     // Get app connection
-    let app_conn = state.app_conn.as_ref().ok_or_else(|| {
-        HcMembraneError::UpstreamUnavailable
-    })?;
+    let app_conn = state
+        .app_conn
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::UpstreamUnavailable)?;
 
     // Transcode payload from base64 encoded JSON to ExternIO
     let payload = base64_json_to_extern_io(query.payload)?;
@@ -107,9 +108,9 @@ fn base64_json_to_extern_io(maybe_payload: Option<String>) -> HcMembraneResult<E
 
 /// Transcode an ExternIO response to a JSON string.
 fn extern_io_to_json(response: &ExternIO) -> HcMembraneResult<String> {
-    let json_value = response.decode::<serde_json::Value>().map_err(|e| {
-        HcMembraneError::Internal(format!("Failed to decode response: {e}"))
-    })?;
+    let json_value = response
+        .decode::<serde_json::Value>()
+        .map_err(|e| HcMembraneError::Internal(format!("Failed to decode response: {e}")))?;
     Ok(json_value.to_string())
 }
 

@@ -9,7 +9,7 @@
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use holochain_types::prelude::{
-    ActionHash, AgentPubKey, AnyDhtHash, AnyLinkableHash, EntryHash, ExternalHash, ExternIO,
+    ActionHash, AgentPubKey, AnyDhtHash, AnyLinkableHash, EntryHash, ExternIO, ExternalHash,
 };
 use serde::{Deserialize, Serialize};
 
@@ -227,7 +227,9 @@ pub async fn dht_get_details(
     let payload = ExternIO::encode(input)
         .map_err(|e| HcMembraneError::Serialization(format!("Failed to encode: {}", e)))?;
 
-    let result = app_conn.call_dht_util(&dna_hash, "dht_get_details", payload).await?;
+    let result = app_conn
+        .call_dht_util(&dna_hash, "dht_get_details", payload)
+        .await?;
 
     let json_value: serde_json::Value = result
         .decode()
@@ -401,7 +403,9 @@ fn wire_link_ops_to_links(
             // Get the tag from the wire create or fall back to query tag
             // If neither is available, use empty tag (the link exists but tag was optimized away)
             // Note: This may produce incorrect ActionHash if tag is missing
-            let tag = wire_create.tag.clone()
+            let tag = wire_create
+                .tag
+                .clone()
                 .or_else(|| query_tag.cloned())
                 .unwrap_or_else(|| LinkTag::new(Vec::new()));
 

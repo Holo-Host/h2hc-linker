@@ -72,7 +72,11 @@ impl PendingDhtResponses {
     /// Register a pending request.
     pub async fn register(&self, msg_id: u64, responder: PendingResponder) {
         let mut guard = self.inner.write().await;
-        debug!(msg_id, pending_count = guard.len(), "Registering pending DHT request");
+        debug!(
+            msg_id,
+            pending_count = guard.len(),
+            "Registering pending DHT request"
+        );
         guard.insert(msg_id, responder);
     }
 
@@ -80,7 +84,12 @@ impl PendingDhtResponses {
     pub async fn remove(&self, msg_id: u64) {
         let mut guard = self.inner.write().await;
         let existed = guard.remove(&msg_id).is_some();
-        debug!(msg_id, existed, pending_count = guard.len(), "Removed pending DHT request (timeout cleanup)");
+        debug!(
+            msg_id,
+            existed,
+            pending_count = guard.len(),
+            "Removed pending DHT request (timeout cleanup)"
+        );
     }
 
     /// Route a response to its pending request.
@@ -113,9 +122,15 @@ impl PendingDhtResponses {
 
         match responder {
             Some(tx) => {
-                info!(msg_id, "Found matching pending request, sending response...");
+                info!(
+                    msg_id,
+                    "Found matching pending request, sending response..."
+                );
                 if tx.send(msg).is_err() {
-                    warn!(msg_id, "Pending request receiver dropped (caller cancelled)");
+                    warn!(
+                        msg_id,
+                        "Pending request receiver dropped (caller cancelled)"
+                    );
                 }
                 true
             }
@@ -189,7 +204,10 @@ impl DhtQuery {
         dna_hash: &DnaHash,
         hash: AnyDhtHash,
     ) -> HcMembraneResult<Option<WireOps>> {
-        let space = self.gateway_kitsune.get_or_create_space(dna_hash).await
+        let space = self
+            .gateway_kitsune
+            .get_or_create_space(dna_hash)
+            .await
             .map_err(|e| HcMembraneError::Internal(e))?;
 
         let loc = hash.get_loc();
@@ -254,7 +272,10 @@ impl DhtQuery {
         dna_hash: &DnaHash,
         link_key: WireLinkKey,
     ) -> HcMembraneResult<Option<WireLinkOps>> {
-        let space = self.gateway_kitsune.get_or_create_space(dna_hash).await
+        let space = self
+            .gateway_kitsune
+            .get_or_create_space(dna_hash)
+            .await
             .map_err(|e| HcMembraneError::Internal(e))?;
 
         let loc = link_key.base.get_loc();
@@ -321,8 +342,7 @@ impl DhtQuery {
             Ok(all_peers) => {
                 info!(
                     peer_count = all_peers.len(),
-                    loc,
-                    "Peer store contents for DHT query"
+                    loc, "Peer store contents for DHT query"
                 );
                 for peer in &all_peers {
                     debug!(
@@ -365,8 +385,7 @@ impl DhtQuery {
 
         info!(
             responsive_count = agents.len(),
-            loc,
-            "Found responsive remote agents"
+            loc, "Found responsive remote agents"
         );
 
         Ok(agents
@@ -420,14 +439,20 @@ impl DhtQuery {
         let (tx, rx) = oneshot::channel();
         pending.register(msg_id, tx).await;
 
-        info!(msg_id, "Registered pending request, sending via send_notify...");
+        info!(
+            msg_id,
+            "Registered pending request, sending via send_notify..."
+        );
 
         // Set up timeout to clean up pending request
         let pending_cleanup = pending.clone();
         let timeout_msg_id = msg_id;
         tokio::spawn(async move {
             tokio::time::sleep(timeout).await;
-            warn!(msg_id = timeout_msg_id, "Timeout cleanup triggered for pending request");
+            warn!(
+                msg_id = timeout_msg_id,
+                "Timeout cleanup triggered for pending request"
+            );
             pending_cleanup.remove(timeout_msg_id).await;
         });
 
@@ -451,12 +476,18 @@ impl DhtQuery {
                     error = %e,
                     "send_notify FAILED"
                 );
-                return Err(HcMembraneError::Internal(format!("Failed to send request: {e}")));
+                return Err(HcMembraneError::Internal(format!(
+                    "Failed to send request: {e}"
+                )));
             }
         }
 
         // Wait for response
-        info!(msg_id, timeout_secs = timeout.as_secs(), "Waiting for response...");
+        info!(
+            msg_id,
+            timeout_secs = timeout.as_secs(),
+            "Waiting for response..."
+        );
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(WireMessage::GetRes { response, .. })) => {
                 info!(msg_id, "Got GetRes response");
@@ -479,7 +510,11 @@ impl DhtQuery {
                 ))
             }
             Err(_) => {
-                warn!(msg_id, timeout_secs = timeout.as_secs(), "Request TIMED OUT - no response received");
+                warn!(
+                    msg_id,
+                    timeout_secs = timeout.as_secs(),
+                    "Request TIMED OUT - no response received"
+                );
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }
@@ -520,14 +555,20 @@ impl DhtQuery {
         let (tx, rx) = oneshot::channel();
         pending.register(msg_id, tx).await;
 
-        info!(msg_id, "Registered pending request, sending via send_notify...");
+        info!(
+            msg_id,
+            "Registered pending request, sending via send_notify..."
+        );
 
         // Set up timeout to clean up pending request
         let pending_cleanup = pending.clone();
         let timeout_msg_id = msg_id;
         tokio::spawn(async move {
             tokio::time::sleep(timeout).await;
-            warn!(msg_id = timeout_msg_id, "Timeout cleanup triggered for pending get_links request");
+            warn!(
+                msg_id = timeout_msg_id,
+                "Timeout cleanup triggered for pending get_links request"
+            );
             pending_cleanup.remove(timeout_msg_id).await;
         });
 
@@ -551,12 +592,18 @@ impl DhtQuery {
                     error = %e,
                     "send_notify FAILED"
                 );
-                return Err(HcMembraneError::Internal(format!("Failed to send request: {e}")));
+                return Err(HcMembraneError::Internal(format!(
+                    "Failed to send request: {e}"
+                )));
             }
         }
 
         // Wait for response
-        info!(msg_id, timeout_secs = timeout.as_secs(), "Waiting for get_links response...");
+        info!(
+            msg_id,
+            timeout_secs = timeout.as_secs(),
+            "Waiting for get_links response..."
+        );
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(WireMessage::GetLinksRes { response, .. })) => {
                 info!(
@@ -573,14 +620,22 @@ impl DhtQuery {
             }
             Ok(Ok(other)) => {
                 warn!(msg_id, ?other, "Got unexpected response type");
-                Err(HcMembraneError::Internal(format!("Unexpected response: {other:?}")))
+                Err(HcMembraneError::Internal(format!(
+                    "Unexpected response: {other:?}"
+                )))
             }
             Ok(Err(_)) => {
                 warn!(msg_id, "Response channel closed (receiver dropped)");
-                Err(HcMembraneError::Internal("Response channel closed".to_string()))
+                Err(HcMembraneError::Internal(
+                    "Response channel closed".to_string(),
+                ))
             }
             Err(_) => {
-                warn!(msg_id, timeout_secs = timeout.as_secs(), "GetLinks request TIMED OUT - no response received");
+                warn!(
+                    msg_id,
+                    timeout_secs = timeout.as_secs(),
+                    "GetLinks request TIMED OUT - no response received"
+                );
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }
