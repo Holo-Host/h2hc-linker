@@ -135,7 +135,6 @@ mod tests {
             }),
             app_conn: None,
             temp_op_store: None,
-            #[cfg(not(feature = "conductor-dht"))]
             dht_query: None,
             auth_store: Some(auth_store),
         }

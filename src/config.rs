@@ -33,8 +33,8 @@ pub struct Configuration {
     /// Address of the Holochain admin WebSocket (for conductor integration during migration)
     pub admin_socket_addr: Option<SocketAddr>,
 
-    /// Bootstrap server URL for Kitsune2
-    pub bootstrap_url: Option<String>,
+    /// Bootstrap server URL for Kitsune2 (required)
+    pub bootstrap_url: String,
 
     /// Iroh relay server URL for Kitsune2
     pub relay_url: Option<String>,
@@ -60,7 +60,7 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             admin_socket_addr: None,
-            bootstrap_url: None,
+            bootstrap_url: String::new(),
             relay_url: None,
             payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
             websocket: WebSocketConfig::default(),
@@ -81,9 +81,16 @@ impl Configuration {
             config.admin_socket_addr = Some(url.parse()?);
         }
 
-        // Kitsune2 configuration
-        if let Ok(url) = std::env::var("HC_MEMBRANE_BOOTSTRAP_URL") {
-            config.bootstrap_url = Some(url);
+        // Kitsune2 configuration (bootstrap URL is required)
+        match std::env::var("HC_MEMBRANE_BOOTSTRAP_URL") {
+            Ok(url) => config.bootstrap_url = url,
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "HC_MEMBRANE_BOOTSTRAP_URL is required. \
+                     hc-membrane cannot operate without kitsune2 networking. \
+                     Set it to your bootstrap server URL (e.g. http://127.0.0.1:PORT)"
+                ));
+            }
         }
         if let Ok(url) = std::env::var("HC_MEMBRANE_RELAY_URL") {
             config.relay_url = Some(url);
@@ -110,10 +117,10 @@ impl Configuration {
         Ok(config)
     }
 
-    /// Check if Kitsune2 is configured
+    /// Kitsune2 is always enabled (bootstrap URL is required at startup).
+    /// This method exists for backwards compatibility with code that checks it.
     pub fn kitsune_enabled(&self) -> bool {
-        // Bootstrap URL is required; relay URL is optional for iroh
-        self.bootstrap_url.is_some()
+        true
     }
 
     /// Check if conductor integration is configured
