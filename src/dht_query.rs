@@ -24,10 +24,15 @@
 //! ```
 
 use holo_hash::AnyDhtHash;
+use holochain_p2p::event::GetActivityOptions;
 use holochain_p2p::WireMessage;
+use holochain_types::activity::AgentActivityResponse;
+use holochain_types::chain::MustGetAgentActivityResponse;
 use holochain_types::dht_op::WireOps;
 use holochain_types::link::{CountLinksResponse, WireLinkKey, WireLinkOps, WireLinkQuery};
 use holochain_types::prelude::{AgentPubKey, DnaHash};
+use holochain_zome_types::chain::ChainFilter;
+use holochain_zome_types::query::{ChainQueryFilter, ChainStatus};
 use kitsune2_api::{DynSpace, Url};
 use kitsune2_core::get_responsive_remote_agents_near_location;
 use std::collections::HashMap;
@@ -704,6 +709,296 @@ impl DhtQuery {
                     timeout_secs = timeout.as_secs(),
                     "GetLinks request TIMED OUT - no response received"
                 );
+                Err(HcMembraneError::Internal("Request timed out".to_string()))
+            }
+        }
+    }
+
+    /// Get agent activity from the DHT.
+    ///
+    /// Queries multiple peers near the agent's DHT location in parallel and returns
+    /// the first non-empty response.
+    pub async fn get_agent_activity(
+        &self,
+        dna_hash: &DnaHash,
+        agent: AgentPubKey,
+        query: ChainQueryFilter,
+        options: GetActivityOptions,
+    ) -> HcMembraneResult<Option<AgentActivityResponse>> {
+        let space = self
+            .gateway_kitsune
+            .get_or_create_space(dna_hash)
+            .await
+            .map_err(|e| HcMembraneError::Internal(e))?;
+
+        let loc = agent.get_loc();
+        let agents = self.get_peers_for_location(&space, loc).await?;
+
+        if agents.is_empty() {
+            info!(dna = %dna_hash, loc, "No peers found for agent activity query");
+            return Ok(None);
+        }
+
+        debug!(
+            dna = %dna_hash,
+            %agent,
+            peer_count = agents.len(),
+            "Querying peers for get_agent_activity"
+        );
+
+        let mut handles = Vec::new();
+        for (to_agent, url) in agents.into_iter().take(PARALLEL_GET_AGENTS_COUNT) {
+            let space = space.clone();
+            let agent = agent.clone();
+            let query = query.clone();
+            let options = options.clone();
+            let pending = self.pending.clone();
+            let timeout = self.timeout;
+
+            handles.push(tokio::spawn(async move {
+                Self::send_get_agent_activity_request(
+                    space, to_agent, url, agent, query, options, pending, timeout,
+                )
+                .await
+            }));
+        }
+
+        let mut last_result = None;
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(Some(response))) if response.status != ChainStatus::Empty => {
+                    return Ok(Some(response));
+                }
+                Ok(Ok(result)) => {
+                    last_result = Some(Ok(result));
+                }
+                Ok(Err(e)) => {
+                    debug!(?e, "Peer agent activity query failed");
+                    if last_result.is_none() {
+                        last_result = Some(Err(e));
+                    }
+                }
+                Err(e) => {
+                    debug!(?e, "Task join error");
+                }
+            }
+        }
+
+        last_result.unwrap_or(Ok(None))
+    }
+
+    /// Get agent activity with must-get semantics from the DHT.
+    ///
+    /// Queries multiple peers near the agent's DHT location in parallel and returns
+    /// the first Activity response.
+    pub async fn must_get_agent_activity(
+        &self,
+        dna_hash: &DnaHash,
+        agent: AgentPubKey,
+        filter: ChainFilter,
+    ) -> HcMembraneResult<Option<MustGetAgentActivityResponse>> {
+        let space = self
+            .gateway_kitsune
+            .get_or_create_space(dna_hash)
+            .await
+            .map_err(|e| HcMembraneError::Internal(e))?;
+
+        let loc = agent.get_loc();
+        let agents = self.get_peers_for_location(&space, loc).await?;
+
+        if agents.is_empty() {
+            info!(dna = %dna_hash, loc, "No peers found for must_get_agent_activity query");
+            return Ok(None);
+        }
+
+        debug!(
+            dna = %dna_hash,
+            %agent,
+            peer_count = agents.len(),
+            "Querying peers for must_get_agent_activity"
+        );
+
+        let mut handles = Vec::new();
+        for (to_agent, url) in agents.into_iter().take(PARALLEL_GET_AGENTS_COUNT) {
+            let space = space.clone();
+            let agent = agent.clone();
+            let filter = filter.clone();
+            let pending = self.pending.clone();
+            let timeout = self.timeout;
+
+            handles.push(tokio::spawn(async move {
+                Self::send_must_get_agent_activity_request(
+                    space, to_agent, url, agent, filter, pending, timeout,
+                )
+                .await
+            }));
+        }
+
+        let mut last_result = None;
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(Some(response))) => {
+                    if matches!(&response, MustGetAgentActivityResponse::Activity { .. }) {
+                        return Ok(Some(response));
+                    }
+                    last_result = Some(Ok(Some(response)));
+                }
+                Ok(Ok(result)) => {
+                    last_result = Some(Ok(result));
+                }
+                Ok(Err(e)) => {
+                    debug!(?e, "Peer must_get_agent_activity query failed");
+                    if last_result.is_none() {
+                        last_result = Some(Err(e));
+                    }
+                }
+                Err(e) => {
+                    debug!(?e, "Task join error");
+                }
+            }
+        }
+
+        last_result.unwrap_or(Ok(None))
+    }
+
+    /// Send a get_agent_activity request to a specific peer.
+    async fn send_get_agent_activity_request(
+        space: DynSpace,
+        to_agent: AgentPubKey,
+        to_url: Url,
+        agent: AgentPubKey,
+        query: ChainQueryFilter,
+        options: GetActivityOptions,
+        pending: PendingDhtResponses,
+        timeout: Duration,
+    ) -> HcMembraneResult<Option<AgentActivityResponse>> {
+        let (msg_id, req) =
+            WireMessage::get_agent_activity_req(to_agent.clone(), agent.clone(), query, options);
+
+        debug!(
+            msg_id,
+            %to_url,
+            %to_agent,
+            %agent,
+            "Preparing GetAgentActivityReq message"
+        );
+
+        let encoded = WireMessage::encode_batch(&[&req])
+            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+
+        let (tx, rx) = oneshot::channel();
+        pending.register(msg_id, tx).await;
+
+        let pending_cleanup = pending.clone();
+        let timeout_msg_id = msg_id;
+        tokio::spawn(async move {
+            tokio::time::sleep(timeout).await;
+            pending_cleanup.remove(timeout_msg_id).await;
+        });
+
+        match space.send_notify(to_url.clone(), encoded).await {
+            Ok(()) => {
+                debug!(msg_id, %to_url, "GetAgentActivityReq send_notify completed");
+            }
+            Err(e) => {
+                warn!(msg_id, %to_url, error = %e, "GetAgentActivityReq send_notify FAILED");
+                return Err(HcMembraneError::Internal(format!(
+                    "Failed to send request: {e}"
+                )));
+            }
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(WireMessage::GetAgentActivityRes { response, .. })) => {
+                debug!(msg_id, "Got GetAgentActivityRes response");
+                Ok(Some(response))
+            }
+            Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
+                warn!(msg_id, %error, "Got ErrorRes for get_agent_activity");
+                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+            }
+            Ok(Ok(other)) => {
+                warn!(msg_id, ?other, "Got unexpected response type for get_agent_activity");
+                Err(HcMembraneError::Internal(format!(
+                    "Unexpected response: {other:?}"
+                )))
+            }
+            Ok(Err(_)) => Err(HcMembraneError::Internal(
+                "Response channel closed".to_string(),
+            )),
+            Err(_) => {
+                warn!(msg_id, timeout_secs = timeout.as_secs(), "GetAgentActivity request TIMED OUT");
+                Err(HcMembraneError::Internal("Request timed out".to_string()))
+            }
+        }
+    }
+
+    /// Send a must_get_agent_activity request to a specific peer.
+    async fn send_must_get_agent_activity_request(
+        space: DynSpace,
+        to_agent: AgentPubKey,
+        to_url: Url,
+        agent: AgentPubKey,
+        filter: ChainFilter,
+        pending: PendingDhtResponses,
+        timeout: Duration,
+    ) -> HcMembraneResult<Option<MustGetAgentActivityResponse>> {
+        let (msg_id, req) =
+            WireMessage::must_get_agent_activity_req(to_agent.clone(), agent.clone(), filter);
+
+        debug!(
+            msg_id,
+            %to_url,
+            %to_agent,
+            %agent,
+            "Preparing MustGetAgentActivityReq message"
+        );
+
+        let encoded = WireMessage::encode_batch(&[&req])
+            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+
+        let (tx, rx) = oneshot::channel();
+        pending.register(msg_id, tx).await;
+
+        let pending_cleanup = pending.clone();
+        let timeout_msg_id = msg_id;
+        tokio::spawn(async move {
+            tokio::time::sleep(timeout).await;
+            pending_cleanup.remove(timeout_msg_id).await;
+        });
+
+        match space.send_notify(to_url.clone(), encoded).await {
+            Ok(()) => {
+                debug!(msg_id, %to_url, "MustGetAgentActivityReq send_notify completed");
+            }
+            Err(e) => {
+                warn!(msg_id, %to_url, error = %e, "MustGetAgentActivityReq send_notify FAILED");
+                return Err(HcMembraneError::Internal(format!(
+                    "Failed to send request: {e}"
+                )));
+            }
+        }
+
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(WireMessage::MustGetAgentActivityRes { response, .. })) => {
+                debug!(msg_id, "Got MustGetAgentActivityRes response");
+                Ok(Some(response))
+            }
+            Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
+                warn!(msg_id, %error, "Got ErrorRes for must_get_agent_activity");
+                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+            }
+            Ok(Ok(other)) => {
+                warn!(msg_id, ?other, "Got unexpected response type for must_get_agent_activity");
+                Err(HcMembraneError::Internal(format!(
+                    "Unexpected response: {other:?}"
+                )))
+            }
+            Ok(Err(_)) => Err(HcMembraneError::Internal(
+                "Response channel closed".to_string(),
+            )),
+            Err(_) => {
+                warn!(msg_id, timeout_secs = timeout.as_secs(), "MustGetAgentActivity request TIMED OUT");
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }

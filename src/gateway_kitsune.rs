@@ -207,6 +207,12 @@ impl SpaceHandler for ProxySpaceHandler {
                         WireMessage::CountLinksRes { msg_id, .. } => {
                             info!(msg_id, ">>> Received CountLinksRes response");
                         }
+                        WireMessage::GetAgentActivityRes { msg_id, .. } => {
+                            info!(msg_id, ">>> Received GetAgentActivityRes response");
+                        }
+                        WireMessage::MustGetAgentActivityRes { msg_id, .. } => {
+                            info!(msg_id, ">>> Received MustGetAgentActivityRes response");
+                        }
                         WireMessage::ErrorRes { msg_id, error } => {
                             info!(msg_id, %error, ">>> Received ErrorRes response");
                         }
@@ -282,6 +288,8 @@ impl ProxySpaceHandler {
             msg @ WireMessage::GetRes { .. }
             | msg @ WireMessage::GetLinksRes { .. }
             | msg @ WireMessage::CountLinksRes { .. }
+            | msg @ WireMessage::GetAgentActivityRes { .. }
+            | msg @ WireMessage::MustGetAgentActivityRes { .. }
             | msg @ WireMessage::ErrorRes { .. } => {
                 let msg_id = msg.get_msg_id();
                 info!(?msg_id, "Routing DHT response to pending request handler");

@@ -17,7 +17,10 @@ pub mod test_signal;
 pub mod websocket;
 pub mod zome_call;
 
-pub use dht::{dht_count_links, dht_get_details, dht_get_links, dht_get_record};
+pub use dht::{
+    dht_count_links, dht_get_agent_activity, dht_get_details, dht_get_links, dht_get_record,
+    dht_must_get_agent_activity,
+};
 pub use health::health_check;
 pub use kitsune::kitsune_routes;
 pub use publish::dht_publish;

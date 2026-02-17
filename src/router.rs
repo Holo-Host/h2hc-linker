@@ -11,8 +11,9 @@ use crate::auth::middleware::{
     require_admin_secret, require_dht_read, require_dht_write, require_k2,
 };
 use crate::routes::{
-    dht_count_links, dht_get_details, dht_get_links, dht_get_record, dht_publish, health_check,
-    kitsune_routes, test_signal, websocket::ws_handler, zome_call,
+    dht_count_links, dht_get_agent_activity, dht_get_details, dht_get_links, dht_get_record,
+    dht_must_get_agent_activity, dht_publish, health_check, kitsune_routes, test_signal,
+    websocket::ws_handler, zome_call,
 };
 use crate::service::AppState;
 
@@ -45,6 +46,15 @@ fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
         .route("/dht/{dna_hash}/details/{hash}", get(dht_get_details))
         .route("/dht/{dna_hash}/links", get(dht_get_links))
         .route("/dht/{dna_hash}/count_links", get(dht_count_links))
+        // Agent activity endpoints
+        .route(
+            "/dht/{dna_hash}/agent_activity/{agent_hash}",
+            get(dht_get_agent_activity),
+        )
+        .route(
+            "/dht/{dna_hash}/must_get_agent_activity",
+            post(dht_must_get_agent_activity),
+        )
         // DHT publish endpoint (via kitsune2)
         .route("/dht/{dna_hash}/publish", post(dht_publish))
         // Zome call endpoint (via conductor)
@@ -66,6 +76,14 @@ fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
         .route("/dht/{dna_hash}/details/{hash}", get(dht_get_details))
         .route("/dht/{dna_hash}/links", get(dht_get_links))
         .route("/dht/{dna_hash}/count_links", get(dht_count_links))
+        .route(
+            "/dht/{dna_hash}/agent_activity/{agent_hash}",
+            get(dht_get_agent_activity),
+        )
+        .route(
+            "/dht/{dna_hash}/must_get_agent_activity",
+            post(dht_must_get_agent_activity),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             require_dht_read,

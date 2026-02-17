@@ -305,6 +305,119 @@ pub async fn dht_count_links(
 }
 
 // ============================================================================
+// Agent activity endpoints
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct AgentActivityPath {
+    pub dna_hash: String,
+    pub agent_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentActivityQuery {
+    /// "status" or "full" (default: "full")
+    pub request: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MustGetAgentActivityBody {
+    pub agent: String,
+    pub chain_top: String,
+    #[serde(default)]
+    pub include_cached_entries: bool,
+}
+
+fn parse_agent_pubkey(s: &str) -> HcMembraneResult<AgentPubKey> {
+    AgentPubKey::try_from(s)
+        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid agent pubkey: {}", s)))
+}
+
+fn parse_action_hash(s: &str) -> HcMembraneResult<ActionHash> {
+    ActionHash::try_from(s)
+        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid action hash: {}", s)))
+}
+
+/// GET /dht/{dna_hash}/agent_activity/{agent_hash}
+///
+/// Get agent activity (chain status and action hashes) for an agent.
+/// Queries the DHT directly via kitsune2.
+#[tracing::instrument(skip(state))]
+pub async fn dht_get_agent_activity(
+    Path(path): Path<AgentActivityPath>,
+    Query(query): Query<AgentActivityQuery>,
+    State(state): State<AppState>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let dht_query = state
+        .dht_query
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let agent = parse_agent_pubkey(&path.agent_hash)?;
+
+    let is_full = query.request.as_deref() != Some("status");
+    let options = holochain_p2p::event::GetActivityOptions {
+        include_valid_activity: is_full,
+        include_rejected_activity: is_full,
+        include_warrants: true,
+        include_full_records: false,
+    };
+
+    let chain_query = holochain_zome_types::query::ChainQueryFilter::new();
+
+    let result = dht_query
+        .get_agent_activity(&dna_hash, agent, chain_query, options)
+        .await?;
+
+    match result {
+        Some(response) => {
+            let json_value = serde_json::to_value(&response).unwrap_or(serde_json::Value::Null);
+            Ok(Json(json_value))
+        }
+        None => Ok(Json(serde_json::Value::Null)),
+    }
+}
+
+/// POST /dht/{dna_hash}/must_get_agent_activity
+///
+/// Get agent activity with must-get semantics (chain filter walk).
+/// Queries the DHT directly via kitsune2.
+#[tracing::instrument(skip(state))]
+pub async fn dht_must_get_agent_activity(
+    Path(path): Path<LinksPath>,
+    State(state): State<AppState>,
+    Json(body): Json<MustGetAgentActivityBody>,
+) -> HcMembraneResult<Json<serde_json::Value>> {
+    let dht_query = state
+        .dht_query
+        .as_ref()
+        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+
+    let dna_hash = parse_dna_hash(&path.dna_hash)?;
+    let agent = parse_agent_pubkey(&body.agent)?;
+    let chain_top = parse_action_hash(&body.chain_top)?;
+
+    let filter = holochain_zome_types::chain::ChainFilter {
+        chain_top,
+        limit_conditions: holochain_zome_types::chain::LimitConditions::ToGenesis,
+        include_cached_entries: body.include_cached_entries,
+    };
+
+    let result = dht_query
+        .must_get_agent_activity(&dna_hash, agent, filter)
+        .await?;
+
+    match result {
+        Some(response) => {
+            let json_value = serde_json::to_value(&response).unwrap_or(serde_json::Value::Null);
+            Ok(Json(json_value))
+        }
+        None => Ok(Json(serde_json::Value::Null)),
+    }
+}
+
+// ============================================================================
 // Wire type to JSON conversion (for direct DHT mode)
 // ============================================================================
 
