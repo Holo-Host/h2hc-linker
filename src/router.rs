@@ -7,6 +7,8 @@ use crate::routes::{
     dht_get_details, dht_get_links, dht_get_record, dht_publish, health_check, kitsune_routes,
     test_signal, websocket::ws_handler, zome_call,
 };
+#[cfg(not(feature = "conductor-dht"))]
+use crate::routes::dht_count_links;
 use crate::service::AppState;
 
 /// Create the main router for hc-membrane
@@ -17,7 +19,7 @@ pub fn create_router(app_state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         // Health check
         .route("/health", get(health_check))
         // WebSocket for browser extension connections
@@ -36,7 +38,13 @@ pub fn create_router(app_state: AppState) -> Router {
         .nest(
             "/k2",
             kitsune_routes().with_state(app_state.kitsune_state.clone()),
-        )
+        );
+
+    // Count links endpoint (kitsune mode only)
+    #[cfg(not(feature = "conductor-dht"))]
+    let router = router.route("/dht/{dna_hash}/count_links", get(dht_count_links));
+
+    router
         .with_state(app_state)
         .layer(cors)
 }
