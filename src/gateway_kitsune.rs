@@ -911,6 +911,7 @@ impl GatewayKitsune {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use holochain_types::dht_op::WireOps;
     use holochain_types::prelude::Signature;
 
     // Helper to create a test DNA hash (uses from_raw_32 for valid checksums)
@@ -1112,5 +1113,314 @@ mod tests {
 
         // Verify no crash - the signal is just dropped for unregistered agents
         assert_eq!(agent_proxy.registration_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_recv_notify_routes_get_res_to_pending() {
+        use holochain_types::record::WireRecordOps;
+        use tokio::sync::oneshot;
+
+        let agent_proxy = AgentProxyManager::new();
+        let pending = PendingDhtResponses::new();
+        let dna = test_dna(1);
+
+        let handler = ProxySpaceHandler {
+            space_id: dna.to_k2_space(),
+            agent_proxy,
+            pending_dht_responses: pending.clone(),
+        };
+
+        // Register a pending request with a known msg_id
+        let msg_id = 42;
+        let (tx, rx) = oneshot::channel();
+        pending.register(msg_id, tx).await;
+
+        // Create a GetRes with the matching msg_id
+        let response = WireOps::Record(WireRecordOps {
+            action: None,
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        });
+        let wire_msg = WireMessage::get_res(msg_id, response);
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+
+        // Deliver via recv_notify
+        let from_peer = Url::from_str("ws://localhost:5000").unwrap();
+        let space_id = dna.to_k2_space();
+        let result = handler.recv_notify(from_peer, space_id, encoded);
+        assert!(result.is_ok());
+
+        // Give spawned routing task time to run
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // The pending request should have received the response
+        let received = rx.await.expect("pending request should receive response");
+        match received {
+            WireMessage::GetRes { msg_id: id, .. } => assert_eq!(id, msg_id),
+            other => panic!("Expected GetRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_recv_notify_routes_get_links_res_to_pending() {
+        use holochain_types::link::WireLinkOps;
+        use tokio::sync::oneshot;
+
+        let agent_proxy = AgentProxyManager::new();
+        let pending = PendingDhtResponses::new();
+        let dna = test_dna(1);
+
+        let handler = ProxySpaceHandler {
+            space_id: dna.to_k2_space(),
+            agent_proxy,
+            pending_dht_responses: pending.clone(),
+        };
+
+        let msg_id = 223;
+        let (tx, rx) = oneshot::channel();
+        pending.register(msg_id, tx).await;
+
+        let response = WireLinkOps {
+            creates: vec![],
+            deletes: vec![],
+        };
+        let wire_msg = WireMessage::get_links_res(msg_id, response);
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+
+        let from_peer = Url::from_str("ws://localhost:5000").unwrap();
+        let result = handler.recv_notify(from_peer, dna.to_k2_space(), encoded);
+        assert!(result.is_ok());
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let received = rx.await.expect("pending request should receive response");
+        match received {
+            WireMessage::GetLinksRes { msg_id: id, .. } => assert_eq!(id, msg_id),
+            other => panic!("Expected GetLinksRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_recv_notify_routes_error_res_to_pending() {
+        use tokio::sync::oneshot;
+
+        let agent_proxy = AgentProxyManager::new();
+        let pending = PendingDhtResponses::new();
+        let dna = test_dna(1);
+
+        let handler = ProxySpaceHandler {
+            space_id: dna.to_k2_space(),
+            agent_proxy,
+            pending_dht_responses: pending.clone(),
+        };
+
+        let msg_id = 55;
+        let (tx, rx) = oneshot::channel();
+        pending.register(msg_id, tx).await;
+
+        let wire_msg = WireMessage::ErrorRes {
+            msg_id,
+            error: "remote DHT error".to_string(),
+        };
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+
+        let from_peer = Url::from_str("ws://localhost:5000").unwrap();
+        let result = handler.recv_notify(from_peer, dna.to_k2_space(), encoded);
+        assert!(result.is_ok());
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let received = rx.await.expect("pending request should receive response");
+        match received {
+            WireMessage::ErrorRes { msg_id: id, error } => {
+                assert_eq!(id, msg_id);
+                assert_eq!(error, "remote DHT error");
+            }
+            other => panic!("Expected ErrorRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_recv_notify_unmatched_response_does_not_panic() {
+        let agent_proxy = AgentProxyManager::new();
+        let pending = PendingDhtResponses::new();
+        let dna = test_dna(1);
+
+        let handler = ProxySpaceHandler {
+            space_id: dna.to_k2_space(),
+            agent_proxy,
+            pending_dht_responses: pending,
+        };
+
+        // Send a GetRes with no matching pending request
+        use holochain_types::record::WireRecordOps;
+        let wire_msg = WireMessage::get_res(
+            999,
+            WireOps::Record(WireRecordOps {
+                action: None,
+                deletes: vec![],
+                updates: vec![],
+                entry: None,
+            }),
+        );
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+
+        let from_peer = Url::from_str("ws://localhost:5000").unwrap();
+        let result = handler.recv_notify(from_peer, dna.to_k2_space(), encoded);
+        assert!(result.is_ok());
+
+        // Give spawned task time to complete without panicking
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    #[test]
+    fn test_wire_message_encode_decode_get_req() {
+        let to_agent = test_agent(0xab);
+        let hash = holo_hash::AnyDhtHash::from(
+            holo_hash::ActionHash::from_raw_32(vec![0x11; 32]),
+        );
+        let (_msg_id, req) = WireMessage::get_req(to_agent.clone(), hash.clone());
+
+        let encoded = WireMessage::encode_batch(&[&req]).expect("encode");
+        let decoded = WireMessage::decode_batch(&encoded).expect("decode");
+        assert_eq!(decoded.len(), 1);
+
+        match &decoded[0] {
+            WireMessage::GetReq {
+                to_agent: decoded_agent,
+                dht_hash,
+                ..
+            } => {
+                assert_eq!(decoded_agent.get_raw_36(), to_agent.get_raw_36());
+                assert_eq!(dht_hash, &hash);
+            }
+            other => panic!("Expected GetReq, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_wire_message_encode_decode_get_res() {
+        use holochain_types::record::WireRecordOps;
+
+        let msg_id = 42;
+        let response = WireOps::Record(WireRecordOps {
+            action: None,
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        });
+        let wire_msg = WireMessage::get_res(msg_id, response);
+
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+        let decoded = WireMessage::decode_batch(&encoded).expect("decode");
+        assert_eq!(decoded.len(), 1);
+
+        match &decoded[0] {
+            WireMessage::GetRes {
+                msg_id: id,
+                response,
+            } => {
+                assert_eq!(*id, msg_id);
+                match response {
+                    WireOps::Record(ops) => {
+                        assert!(ops.action.is_none());
+                        assert!(ops.deletes.is_empty());
+                    }
+                    other => panic!("Expected Record WireOps, got {:?}", other),
+                }
+            }
+            other => panic!("Expected GetRes, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_wire_message_encode_decode_get_links_req() {
+        use holochain_p2p::event::GetLinksOptions;
+        use holochain_types::link::WireLinkKey;
+        use holochain_types::prelude::LinkTypeFilter;
+
+        let to_agent = test_agent(0xcc);
+        let base = holo_hash::AnyLinkableHash::from(
+            holo_hash::EntryHash::from_raw_32(vec![0x22; 32]),
+        );
+        let link_key = WireLinkKey {
+            base,
+            type_query: LinkTypeFilter::Types(vec![]),
+            tag: None,
+            after: None,
+            before: None,
+            author: None,
+        };
+        let (_msg_id, req) =
+            WireMessage::get_links_req(to_agent.clone(), link_key.clone(), GetLinksOptions {});
+
+        let encoded = WireMessage::encode_batch(&[&req]).expect("encode");
+        let decoded = WireMessage::decode_batch(&encoded).expect("decode");
+        assert_eq!(decoded.len(), 1);
+
+        match &decoded[0] {
+            WireMessage::GetLinksReq {
+                to_agent: decoded_agent,
+                link_key: decoded_key,
+                ..
+            } => {
+                assert_eq!(decoded_agent.get_raw_36(), to_agent.get_raw_36());
+                assert_eq!(decoded_key.base, link_key.base);
+            }
+            other => panic!("Expected GetLinksReq, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_wire_message_encode_decode_get_links_res() {
+        use holochain_types::link::WireLinkOps;
+
+        let msg_id = 99;
+        let response = WireLinkOps {
+            creates: vec![],
+            deletes: vec![],
+        };
+        let wire_msg = WireMessage::get_links_res(msg_id, response);
+
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+        let decoded = WireMessage::decode_batch(&encoded).expect("decode");
+        assert_eq!(decoded.len(), 1);
+
+        match &decoded[0] {
+            WireMessage::GetLinksRes {
+                msg_id: id,
+                response,
+            } => {
+                assert_eq!(*id, msg_id);
+                assert!(response.creates.is_empty());
+                assert!(response.deletes.is_empty());
+            }
+            other => panic!("Expected GetLinksRes, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_wire_message_encode_decode_error_res() {
+        let msg_id = 77;
+        let wire_msg = WireMessage::ErrorRes {
+            msg_id,
+            error: "something went wrong".to_string(),
+        };
+
+        let encoded = WireMessage::encode_batch(&[&wire_msg]).expect("encode");
+        let decoded = WireMessage::decode_batch(&encoded).expect("decode");
+        assert_eq!(decoded.len(), 1);
+
+        match &decoded[0] {
+            WireMessage::ErrorRes {
+                msg_id: id,
+                error,
+            } => {
+                assert_eq!(*id, msg_id);
+                assert_eq!(error, "something went wrong");
+            }
+            other => panic!("Expected ErrorRes, got {:?}", other),
+        }
     }
 }

@@ -815,18 +815,17 @@ fn is_wire_ops_empty(ops: &WireOps) -> bool {
 mod tests {
     use super::*;
     use holochain_types::entry::WireEntryOps;
+    use holochain_types::link::{CountLinksResponse, WireLinkOps};
     use holochain_types::record::WireRecordOps;
 
     #[test]
     fn test_pending_dht_responses() {
-        // Test that PendingDhtResponses can be created
         let pending = PendingDhtResponses::new();
         assert!(format!("{:?}", pending).contains("PendingDhtResponses"));
     }
 
     #[test]
     fn test_is_wire_ops_empty() {
-        // Empty entry ops
         let empty_entry = WireOps::Entry(WireEntryOps {
             creates: vec![],
             deletes: vec![],
@@ -835,7 +834,6 @@ mod tests {
         });
         assert!(is_wire_ops_empty(&empty_entry));
 
-        // Empty record ops
         let empty_record = WireOps::Record(WireRecordOps {
             action: None,
             deletes: vec![],
@@ -843,5 +841,224 @@ mod tests {
             entry: None,
         });
         assert!(is_wire_ops_empty(&empty_record));
+    }
+
+    #[tokio::test]
+    async fn test_route_get_res_to_pending_request() {
+        let pending = PendingDhtResponses::new();
+        let (tx, rx) = oneshot::channel();
+
+        let msg_id = 42;
+        pending.register(msg_id, tx).await;
+
+        let response = WireOps::Record(WireRecordOps {
+            action: None,
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        });
+        let wire_msg = WireMessage::get_res(msg_id, response);
+
+        let routed = pending.route_response(wire_msg).await;
+        assert!(routed);
+
+        let received = rx.await.expect("channel should deliver response");
+        match received {
+            WireMessage::GetRes {
+                msg_id: id,
+                response: _,
+            } => assert_eq!(id, msg_id),
+            other => panic!("Expected GetRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_get_links_res_to_pending_request() {
+        let pending = PendingDhtResponses::new();
+        let (tx, rx) = oneshot::channel();
+
+        let msg_id = 99;
+        pending.register(msg_id, tx).await;
+
+        let response = WireLinkOps {
+            creates: vec![],
+            deletes: vec![],
+        };
+        let wire_msg = WireMessage::get_links_res(msg_id, response);
+
+        let routed = pending.route_response(wire_msg).await;
+        assert!(routed);
+
+        let received = rx.await.expect("channel should deliver response");
+        match received {
+            WireMessage::GetLinksRes {
+                msg_id: id,
+                response,
+            } => {
+                assert_eq!(id, msg_id);
+                assert!(response.creates.is_empty());
+            }
+            other => panic!("Expected GetLinksRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_count_links_res_to_pending_request() {
+        let pending = PendingDhtResponses::new();
+        let (tx, rx) = oneshot::channel();
+
+        let msg_id = 200;
+        pending.register(msg_id, tx).await;
+
+        let response = CountLinksResponse::new(vec![]);
+        let wire_msg = WireMessage::count_links_res(msg_id, response);
+
+        let routed = pending.route_response(wire_msg).await;
+        assert!(routed);
+
+        let received = rx.await.expect("channel should deliver response");
+        match received {
+            WireMessage::CountLinksRes { msg_id: id, .. } => assert_eq!(id, msg_id),
+            other => panic!("Expected CountLinksRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_error_res_to_pending_request() {
+        let pending = PendingDhtResponses::new();
+        let (tx, rx) = oneshot::channel();
+
+        let msg_id = 55;
+        pending.register(msg_id, tx).await;
+
+        let wire_msg = WireMessage::ErrorRes {
+            msg_id,
+            error: "test error".to_string(),
+        };
+
+        let routed = pending.route_response(wire_msg).await;
+        assert!(routed);
+
+        let received = rx.await.expect("channel should deliver response");
+        match received {
+            WireMessage::ErrorRes { msg_id: id, error } => {
+                assert_eq!(id, msg_id);
+                assert_eq!(error, "test error");
+            }
+            other => panic!("Expected ErrorRes, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_route_response_no_matching_pending() {
+        let pending = PendingDhtResponses::new();
+
+        let wire_msg = WireMessage::get_res(
+            999,
+            WireOps::Record(WireRecordOps {
+                action: None,
+                deletes: vec![],
+                updates: vec![],
+                entry: None,
+            }),
+        );
+
+        let routed = pending.route_response(wire_msg).await;
+        assert!(!routed);
+    }
+
+    #[tokio::test]
+    async fn test_remove_cleans_up_pending_request() {
+        let pending = PendingDhtResponses::new();
+        let (tx, _rx) = oneshot::channel();
+
+        let msg_id = 77;
+        pending.register(msg_id, tx).await;
+
+        // Simulate timeout cleanup
+        pending.remove(msg_id).await;
+
+        // Now routing should fail — no pending request
+        let wire_msg = WireMessage::get_res(
+            msg_id,
+            WireOps::Record(WireRecordOps {
+                action: None,
+                deletes: vec![],
+                updates: vec![],
+                entry: None,
+            }),
+        );
+        let routed = pending.route_response(wire_msg).await;
+        assert!(!routed);
+    }
+
+    #[tokio::test]
+    async fn test_route_response_after_receiver_dropped() {
+        let pending = PendingDhtResponses::new();
+        let (tx, rx) = oneshot::channel();
+
+        let msg_id = 88;
+        pending.register(msg_id, tx).await;
+
+        // Drop the receiver before the response arrives
+        drop(rx);
+
+        let wire_msg = WireMessage::get_res(
+            msg_id,
+            WireOps::Record(WireRecordOps {
+                action: None,
+                deletes: vec![],
+                updates: vec![],
+                entry: None,
+            }),
+        );
+
+        // route_response should still return true (it found the pending entry)
+        // but the send will fail silently (logged as warning)
+        let routed = pending.route_response(wire_msg).await;
+        assert!(routed);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_pending_requests_independent() {
+        let pending = PendingDhtResponses::new();
+
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+
+        pending.register(10, tx1).await;
+        pending.register(20, tx2).await;
+
+        // Route response only to msg_id=20
+        let wire_msg = WireMessage::get_links_res(
+            20,
+            WireLinkOps {
+                creates: vec![],
+                deletes: vec![],
+            },
+        );
+        let routed = pending.route_response(wire_msg).await;
+        assert!(routed);
+
+        // msg_id=20 should have received response
+        let received = rx2.await.expect("rx2 should get response");
+        assert!(matches!(received, WireMessage::GetLinksRes { msg_id: 20, .. }));
+
+        // msg_id=10 should still be pending (not consumed)
+        // Route its response now
+        let wire_msg2 = WireMessage::get_res(
+            10,
+            WireOps::Record(WireRecordOps {
+                action: None,
+                deletes: vec![],
+                updates: vec![],
+                entry: None,
+            }),
+        );
+        let routed2 = pending.route_response(wire_msg2).await;
+        assert!(routed2);
+
+        let received2 = rx1.await.expect("rx1 should get response");
+        assert!(matches!(received2, WireMessage::GetRes { msg_id: 10, .. }));
     }
 }
