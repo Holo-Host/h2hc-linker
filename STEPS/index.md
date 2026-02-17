@@ -15,9 +15,10 @@
 | M3 | ✅ | Add Kitsune liveness endpoints |
 | M4 | ✅ | Direct DHT Operations via Kitsune2 (upgraded to 0.4.0-dev.2 + iroh) |
 | M4.1 | ⏳ | Preflight Agent Info + E2E Validation |
-| M5 | 📋 | Migrate op construction to gateway |
-| M6 | 📋 | Remove conductor dependency |
-| M7 | 📋 | Deprecate hc-http-gw-fork |
+| M5 | ⏳ | Authentication Layer |
+| M6 | 📋 | Migrate op construction to gateway |
+| M7 | 📋 | Remove conductor dependency |
+| M8 | 📋 | Deprecate hc-http-gw-fork |
 
 **Legend**: ✅ Complete | ⏳ In Progress | 📋 Planned | ❌ Blocked (code complete but not working)
 
@@ -152,7 +153,20 @@ Added PreflightCache to include registered agent infos in preflight messages:
 2. Check browser-to-browser signal relay through gateway
 3. After fix, commit all changes
 
-### Step M5: Migrate op construction to gateway
+### Step M5: Authentication Layer
+**Status**: ⏳ In Progress
+**Plan**: [M5_PLAN.md](./M5_PLAN.md)
+
+Auth layer gated on `HC_MEMBRANE_ADMIN_SECRET` env var. When absent, all endpoints remain open (backwards compatible).
+
+- ⏳ Admin API (`POST/DELETE/GET /admin/agents`) protected by shared secret
+- ⏳ WS challenge-response auth (ed25519 signature verification)
+- ⏳ Session tokens for HTTP Bearer auth with per-agent capabilities
+- ⏳ Capabilities: `dht_read`, `dht_write`, `k2`
+- ⏳ Agent removal revokes sessions and drops WS connections
+- ⏳ 84 unit tests passing
+
+### Step M6: Migrate op construction to gateway
 **Status**: 📋 Planned
 
 - Add produce_ops_from_record in hc-membrane
@@ -161,7 +175,7 @@ Added PreflightCache to include registered agent infos in preflight messages:
 - Keep old ops endpoint for backwards compat
 - **Test**: ziptest passes, publishing verified
 
-### Step M6: Remove conductor dependency
+### Step M7: Remove conductor dependency
 **Status**: 📋 Planned
 
 - Remove dht_util zome routing
@@ -169,7 +183,7 @@ Added PreflightCache to include registered agent infos in preflight messages:
 - hc-membrane is standalone Kitsune2 peer
 - **Test**: ziptest passes against hc-membrane only
 
-### Step M7: Deprecate hc-http-gw-fork
+### Step M8: Deprecate hc-http-gw-fork
 **Status**: 📋 Planned
 
 - Update Fishy to require hc-membrane

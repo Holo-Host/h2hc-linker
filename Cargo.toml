@@ -55,6 +55,3 @@ tower = "0.5"
 [features]
 default = []
 test-utils = []
-# Use conductor for DHT queries (M2 fallback mode).
-# When disabled (default), DHT queries go directly via kitsune2 wire protocol.
-conductor-dht = []

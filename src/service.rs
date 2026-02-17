@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 use crate::agent_proxy::AgentProxyManager;
+use crate::auth::AuthStore;
 use crate::conductor::{AdminConn, AppConn};
 use crate::config::Configuration;
 use crate::dht_query::{DhtQuery, PendingDhtResponses};
@@ -29,9 +30,10 @@ pub struct AppState {
     pub app_conn: Option<AppConn>,
     /// Temp op store for publishing (if kitsune2 enabled)
     pub temp_op_store: Option<TempOpStoreHandle>,
-    /// DHT query handler for direct kitsune2 queries (if kitsune2 enabled)
-    #[cfg(not(feature = "conductor-dht"))]
+    /// DHT query handler for direct kitsune2 queries
     pub dht_query: Option<DhtQuery>,
+    /// Auth store (if auth enabled via HC_MEMBRANE_ADMIN_SECRET)
+    pub auth_store: Option<AuthStore>,
 }
 
 /// The main hc-membrane service
@@ -49,11 +51,9 @@ impl HcMembraneService {
         let agent_proxy = AgentProxyManager::new();
 
         // Create shared pending DHT responses for DhtQuery <-> ProxySpaceHandler communication
-        #[cfg(not(feature = "conductor-dht"))]
         let pending_dht_responses = PendingDhtResponses::new();
 
-        // Create Kitsune2 instance if configured
-        #[cfg(not(feature = "conductor-dht"))]
+        // Create Kitsune2 instance (always enabled - bootstrap_url is required)
         let (kitsune, gateway_kitsune, temp_op_store, dht_query) = if config.kitsune_enabled() {
             tracing::info!("Initializing Kitsune2 instance with agent registration support and direct DHT queries");
 
@@ -67,12 +67,10 @@ impl HcMembraneService {
                 pending_dht_responses.clone(),
             );
 
-            let mut builder = KitsuneProxyBuilder::new(kitsune_proxy)
-                .with_op_store(op_store_factory.into_dyn());
+            let mut builder =
+                KitsuneProxyBuilder::new(kitsune_proxy).with_op_store(op_store_factory.into_dyn());
 
-            if let Some(ref bootstrap_url) = config.bootstrap_url {
-                builder = builder.with_bootstrap_url(bootstrap_url);
-            }
+            builder = builder.with_bootstrap_url(&config.bootstrap_url);
             if let Some(ref relay_url) = config.relay_url {
                 builder = builder.with_relay_url(relay_url);
             }
@@ -82,8 +80,14 @@ impl HcMembraneService {
                     tracing::info!("Kitsune2 instance created successfully");
                     let gw_kitsune = GatewayKitsune::new(k.clone(), agent_proxy.clone());
                     // Create DhtQuery with the same pending responses
-                    let dht_query = DhtQuery::new(gw_kitsune.clone(), pending_dht_responses.clone());
-                    (Some(k), Some(gw_kitsune), Some(op_store_handle), Some(dht_query))
+                    let dht_query =
+                        DhtQuery::new(gw_kitsune.clone(), pending_dht_responses.clone());
+                    (
+                        Some(k),
+                        Some(gw_kitsune),
+                        Some(op_store_handle),
+                        Some(dht_query),
+                    )
                 }
                 Err(e) => {
                     tracing::error!("Failed to create Kitsune2 instance: {}", e);
@@ -93,53 +97,12 @@ impl HcMembraneService {
                 }
             }
         } else {
-            tracing::info!("Kitsune2 not configured (no bootstrap/signal URLs)");
-            (None, None, None, None)
-        };
-
-        // Create Kitsune2 instance if configured (conductor-dht feature: use conductor for DHT queries)
-        #[cfg(feature = "conductor-dht")]
-        let (kitsune, gateway_kitsune, temp_op_store) = if config.kitsune_enabled() {
-            tracing::info!("Initializing Kitsune2 instance with agent registration support (conductor-dht mode)");
-
-            // Create TempOpStore for publishing
-            let (op_store_factory, op_store_handle) = TempOpStoreFactory::create();
-            op_store_factory.start_cleanup_task();
-
-            // Create KitsuneProxy handler (no shared pending responses needed in conductor-dht mode)
-            let kitsune_proxy = KitsuneProxy::new(agent_proxy.clone());
-
-            let mut builder = KitsuneProxyBuilder::new(kitsune_proxy)
-                .with_op_store(op_store_factory.into_dyn());
-
-            if let Some(ref bootstrap_url) = config.bootstrap_url {
-                builder = builder.with_bootstrap_url(bootstrap_url);
-            }
-            if let Some(ref relay_url) = config.relay_url {
-                builder = builder.with_relay_url(relay_url);
-            }
-
-            match builder.build().await {
-                Ok(k) => {
-                    tracing::info!("Kitsune2 instance created successfully");
-                    let gw_kitsune = GatewayKitsune::new(k.clone(), agent_proxy.clone());
-                    (Some(k), Some(gw_kitsune), Some(op_store_handle))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create Kitsune2 instance: {}", e);
-                    return Err(HcMembraneError::Internal(format!(
-                        "Failed to create Kitsune2 instance: {e}"
-                    )));
-                }
-            }
-        } else {
-            tracing::info!("Kitsune2 not configured (no bootstrap/signal URLs)");
-            (None, None, None)
+            unreachable!("bootstrap_url is required; from_env() enforces this")
         };
 
         let kitsune_state = Arc::new(KitsuneState {
-            enabled: config.kitsune_enabled(),
-            bootstrap_url: config.bootstrap_url.clone(),
+            enabled: true,
+            bootstrap_url: Some(config.bootstrap_url.clone()),
             relay_url: config.relay_url.clone(),
             kitsune,
         });
@@ -148,9 +111,24 @@ impl HcMembraneService {
         let app_conn = if let Some(admin_addr) = config.admin_socket_addr {
             tracing::info!("Initializing conductor connection to {}", admin_addr);
             let admin_conn = AdminConn::new(admin_addr);
-            Some(AppConn::new(admin_conn, admin_addr, config.zome_call_timeout))
+            Some(AppConn::new(
+                admin_conn,
+                admin_addr,
+                config.zome_call_timeout,
+            ))
         } else {
             tracing::info!("Conductor not configured (no admin WebSocket URL)");
+            None
+        };
+
+        // Create auth store if auth is enabled
+        let auth_store = if config.auth_enabled() {
+            tracing::info!("Authentication enabled (HC_MEMBRANE_ADMIN_SECRET set)");
+            let store = AuthStore::new(config.session_ttl);
+            store.start_cleanup_task();
+            Some(store)
+        } else {
+            tracing::info!("Authentication disabled (no HC_MEMBRANE_ADMIN_SECRET)");
             None
         };
 
@@ -161,8 +139,8 @@ impl HcMembraneService {
             kitsune_state,
             app_conn,
             temp_op_store,
-            #[cfg(not(feature = "conductor-dht"))]
             dht_query,
+            auth_store,
         };
 
         Ok(Self { addr, app_state })

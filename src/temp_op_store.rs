@@ -157,8 +157,7 @@ impl TempOpStoreHandle {
     /// The computed OpId on success.
     pub async fn store_op(&self, op_bytes: Bytes) -> Result<OpId, String> {
         // Decode the DhtOp to get its hash and basis
-        let op: DhtOp =
-            decode(&op_bytes).map_err(|e| format!("Failed to decode DhtOp: {e}"))?;
+        let op: DhtOp = decode(&op_bytes).map_err(|e| format!("Failed to decode DhtOp: {e}"))?;
 
         // Compute the DhtOpHash using the hashing trait
         let op_hashed: DhtOpHashed = op.clone().into_hashed();

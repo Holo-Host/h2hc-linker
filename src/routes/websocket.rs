@@ -15,8 +15,10 @@ use axum::{
     response::Response,
 };
 use base64::Engine;
+use ed25519_dalek::{Signature, VerifyingKey};
 use futures::{SinkExt, StreamExt};
 use holochain_types::prelude::{AgentPubKey, DnaHash};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 use std::time::Instant;
@@ -27,10 +29,17 @@ use tokio::time::interval;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
-    /// Authenticate the connection with a session token.
+    /// Authenticate the connection with an agent pubkey.
+    /// When auth is enabled, starts challenge-response flow.
+    /// When auth is disabled, immediately returns AuthOk.
     Auth {
-        /// Session token (can be empty if no authenticator configured).
-        session_token: String,
+        /// Agent public key (HoloHash string).
+        agent_pubkey: String,
+    },
+    /// Response to an auth challenge (sign the nonce).
+    AuthChallengeResponse {
+        /// Ed25519 signature of the challenge (base64 encoded, 64 bytes).
+        signature: String,
     },
     /// Register an agent for a specific DNA to receive signals.
     Register {
@@ -81,8 +90,16 @@ pub struct SignedRemoteSignalInput {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    /// Authentication succeeded.
-    AuthOk,
+    /// Authentication succeeded. Includes session token for HTTP Bearer auth.
+    AuthOk {
+        /// Session token for HTTP requests. Empty string when auth is disabled.
+        session_token: String,
+    },
+    /// Authentication challenge - client must sign this nonce.
+    AuthChallenge {
+        /// Random nonce to sign (hex encoded, 32 bytes).
+        challenge: String,
+    },
     /// Authentication failed.
     AuthError {
         /// Error message.
@@ -142,6 +159,12 @@ struct ConnectionState {
     last_activity: Instant,
     /// Registered agent-DNA pairs using proper Holochain types.
     registrations: Vec<(DnaHash, AgentPubKey)>,
+    /// Agent waiting for challenge response (auth flow step 1 complete).
+    pending_auth_agent: Option<AgentPubKey>,
+    /// Challenge nonce waiting for signature (auth flow step 1 complete).
+    pending_challenge: Option<Vec<u8>>,
+    /// The authenticated agent (after successful challenge-response).
+    authenticated_agent: Option<AgentPubKey>,
 }
 
 impl Default for ConnectionState {
@@ -150,6 +173,9 @@ impl Default for ConnectionState {
             authenticated: false,
             last_activity: Instant::now(),
             registrations: Vec::new(),
+            pending_auth_agent: None,
+            pending_challenge: None,
+            authenticated_agent: None,
         }
     }
 }
@@ -272,6 +298,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
+    // Unregister WS sender from auth store
+    if let (Some(ref auth_store), Some(ref agent)) =
+        (&state.auth_store, &conn_state.authenticated_agent)
+    {
+        auth_store.unregister_ws_sender(agent, &tx).await;
+    }
+
     // Wait for send task to complete
     send_task.abort();
 }
@@ -284,11 +317,12 @@ async fn handle_client_message(
     sender: &WsSender,
 ) -> Option<ServerMessage> {
     match msg {
-        ClientMessage::Auth { session_token: _ } => {
-            // No authenticator configured - allow unauthenticated connections
-            // In production, this would validate the session token
-            state.authenticated = true;
-            Some(ServerMessage::AuthOk)
+        ClientMessage::Auth { agent_pubkey } => {
+            handle_auth(agent_pubkey, state, app_state, sender).await
+        }
+
+        ClientMessage::AuthChallengeResponse { signature } => {
+            handle_auth_challenge_response(signature, state, app_state, sender).await
         }
 
         ClientMessage::Register {
@@ -330,6 +364,18 @@ async fn handle_client_message(
                     });
                 }
             };
+
+            // When auth is enabled, verify the registered agent matches the authenticated agent
+            if app_state.auth_store.is_some() {
+                if let Some(ref auth_agent) = state.authenticated_agent {
+                    if &agent != auth_agent {
+                        return Some(ServerMessage::Error {
+                            message: "Cannot register a different agent than authenticated"
+                                .to_string(),
+                        });
+                    }
+                }
+            }
 
             // Check if already registered locally
             let key = (dna.clone(), agent.clone());
@@ -502,20 +548,148 @@ async fn handle_client_message(
     }
 }
 
+/// Handle the Auth message.
+/// When auth is disabled: immediately authenticate and return AuthOk with empty token.
+/// When auth is enabled: verify agent is allowed, generate challenge.
+async fn handle_auth(
+    agent_pubkey_str: String,
+    state: &mut ConnectionState,
+    app_state: &AppState,
+    _sender: &WsSender,
+) -> Option<ServerMessage> {
+    // Parse agent pubkey
+    let agent = match AgentPubKey::try_from(agent_pubkey_str.as_str()) {
+        Ok(a) => a,
+        Err(e) => {
+            return Some(ServerMessage::AuthError {
+                message: format!("Invalid agent pubkey: {e:?}"),
+            });
+        }
+    };
+
+    // If auth is disabled, auto-accept
+    let Some(ref auth_store) = app_state.auth_store else {
+        state.authenticated = true;
+        state.authenticated_agent = Some(agent);
+        return Some(ServerMessage::AuthOk {
+            session_token: String::new(),
+        });
+    };
+
+    // Check if agent is in the allowed list
+    if !auth_store.is_agent_allowed(&agent).await {
+        return Some(ServerMessage::AuthError {
+            message: "Agent not allowed".to_string(),
+        });
+    }
+
+    // Generate 32-byte random challenge
+    let challenge: [u8; 32] = rand::rng().random();
+
+    state.pending_auth_agent = Some(agent);
+    state.pending_challenge = Some(challenge.to_vec());
+
+    Some(ServerMessage::AuthChallenge {
+        challenge: hex::encode(challenge),
+    })
+}
+
+/// Handle the AuthChallengeResponse message.
+/// Verify the signature against the pending challenge and agent pubkey.
+async fn handle_auth_challenge_response(
+    signature_b64: String,
+    state: &mut ConnectionState,
+    app_state: &AppState,
+    sender: &WsSender,
+) -> Option<ServerMessage> {
+    // Must have a pending challenge
+    let Some(agent) = state.pending_auth_agent.take() else {
+        return Some(ServerMessage::AuthError {
+            message: "No pending auth challenge".to_string(),
+        });
+    };
+    let Some(challenge) = state.pending_challenge.take() else {
+        return Some(ServerMessage::AuthError {
+            message: "No pending auth challenge".to_string(),
+        });
+    };
+
+    // Decode the signature
+    let sig_bytes = match base64::engine::general_purpose::STANDARD.decode(&signature_b64) {
+        Ok(b) => b,
+        Err(e) => {
+            return Some(ServerMessage::AuthError {
+                message: format!("Invalid signature encoding: {e}"),
+            });
+        }
+    };
+
+    // Parse as ed25519 signature (64 bytes)
+    let signature = match Signature::from_slice(&sig_bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            return Some(ServerMessage::AuthError {
+                message: format!("Invalid signature format: {e}"),
+            });
+        }
+    };
+
+    // Extract the 32 core bytes from the AgentPubKey for ed25519 verification
+    let raw_key = agent.get_raw_32();
+    let verifying_key = match VerifyingKey::from_bytes(raw_key.try_into().unwrap_or(&[0u8; 32])) {
+        Ok(k) => k,
+        Err(e) => {
+            return Some(ServerMessage::AuthError {
+                message: format!("Invalid agent public key for verification: {e}"),
+            });
+        }
+    };
+
+    // Verify the signature
+    use ed25519_dalek::Verifier;
+    if verifying_key.verify(&challenge, &signature).is_err() {
+        return Some(ServerMessage::AuthError {
+            message: "Signature verification failed".to_string(),
+        });
+    }
+
+    // Auth succeeded - create session
+    let auth_store = app_state.auth_store.as_ref().unwrap();
+    let Some(session_token) = auth_store.create_session(&agent).await else {
+        return Some(ServerMessage::AuthError {
+            message: "Failed to create session".to_string(),
+        });
+    };
+
+    // Register WS sender for forced disconnect on agent removal
+    auth_store.register_ws_sender(&agent, sender.clone()).await;
+
+    state.authenticated = true;
+    state.authenticated_agent = Some(agent);
+
+    Some(ServerMessage::AuthOk {
+        session_token: session_token.as_str().to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_client_message_auth_deserialization() {
-        let auth_json = r#"{"type": "auth", "session_token": "abc123"}"#;
+        let auth_json = r#"{"type": "auth", "agent_pubkey": "uhCAkAQEB"}"#;
         let msg: ClientMessage = serde_json::from_str(auth_json).unwrap();
-        assert!(matches!(msg, ClientMessage::Auth { session_token } if session_token == "abc123"));
+        assert!(matches!(msg, ClientMessage::Auth { agent_pubkey } if agent_pubkey == "uhCAkAQEB"));
+    }
 
-        // Empty session token
-        let auth_json = r#"{"type": "auth", "session_token": ""}"#;
-        let msg: ClientMessage = serde_json::from_str(auth_json).unwrap();
-        assert!(matches!(msg, ClientMessage::Auth { session_token } if session_token.is_empty()));
+    #[test]
+    fn test_client_message_auth_challenge_response_deserialization() {
+        let json = r#"{"type": "auth_challenge_response", "signature": "AQID"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(
+            matches!(msg, ClientMessage::AuthChallengeResponse { signature } if signature == "AQID")
+        );
     }
 
     #[test]
@@ -555,9 +729,32 @@ mod tests {
 
     #[test]
     fn test_server_message_auth_ok() {
-        let msg = ServerMessage::AuthOk;
+        let msg = ServerMessage::AuthOk {
+            session_token: "abc123".to_string(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
-        assert_eq!(json, r#"{"type":"auth_ok"}"#);
+        assert!(json.contains(r#""type":"auth_ok""#));
+        assert!(json.contains(r#""session_token":"abc123""#));
+    }
+
+    #[test]
+    fn test_server_message_auth_ok_empty_token() {
+        let msg = ServerMessage::AuthOk {
+            session_token: String::new(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"auth_ok""#));
+        assert!(json.contains(r#""session_token":"""#));
+    }
+
+    #[test]
+    fn test_server_message_auth_challenge() {
+        let msg = ServerMessage::AuthChallenge {
+            challenge: "deadbeef".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"auth_challenge""#));
+        assert!(json.contains(r#""challenge":"deadbeef""#));
     }
 
     #[test]

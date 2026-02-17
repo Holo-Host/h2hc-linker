@@ -164,7 +164,10 @@ pub async fn dht_publish(
             // Publish each group to the appropriate DHT authorities
             for (basis_loc, op_ids) in ops_by_loc {
                 let op_count = op_ids.len();
-                match gateway_kitsune.publish_ops(&dna_hash, op_ids, basis_loc).await {
+                match gateway_kitsune
+                    .publish_ops(&dna_hash, op_ids, basis_loc)
+                    .await
+                {
                     Ok(peer_count) => {
                         if peer_count > 0 {
                             // Only count as published if at least one peer received it
@@ -241,16 +244,12 @@ async fn process_signed_op(
     // Decode op data from base64
     let op_bytes = base64::engine::general_purpose::STANDARD
         .decode(&signed_op.op_data)
-        .map_err(|e| {
-            HcMembraneError::RequestMalformed(format!("Invalid op_data base64: {e}"))
-        })?;
+        .map_err(|e| HcMembraneError::RequestMalformed(format!("Invalid op_data base64: {e}")))?;
 
     // Decode signature from base64
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&signed_op.signature)
-        .map_err(|e| {
-            HcMembraneError::RequestMalformed(format!("Invalid signature base64: {e}"))
-        })?;
+        .map_err(|e| HcMembraneError::RequestMalformed(format!("Invalid signature base64: {e}")))?;
 
     // Validate signature length
     if sig_bytes.len() != 64 {
@@ -262,9 +261,9 @@ async fn process_signed_op(
 
     // Decode DhtOp from msgpack bytes to get basis location for publishing
     let extern_io = ExternIO::from(op_bytes.clone());
-    let op: DhtOp = extern_io.decode().map_err(|e| {
-        HcMembraneError::RequestMalformed(format!("Failed to decode DhtOp: {e}"))
-    })?;
+    let op: DhtOp = extern_io
+        .decode()
+        .map_err(|e| HcMembraneError::RequestMalformed(format!("Failed to decode DhtOp: {e}")))?;
 
     // Get the chain op (browser extensions only produce ChainOps, not WarrantOps)
     let chain_op = match &op {

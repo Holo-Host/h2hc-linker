@@ -17,8 +17,9 @@
 //! - Kitsune direct API (/k2/*): network status, peer info, liveness
 
 pub(crate) mod agent_proxy;
-mod config;
+pub mod auth;
 pub mod conductor;
+mod config;
 pub(crate) mod dht_query;
 mod error;
 pub(crate) mod gateway_kitsune;

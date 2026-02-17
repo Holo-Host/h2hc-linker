@@ -100,7 +100,10 @@ pub async fn test_signal(
     };
 
     // Send the signal via the agent proxy manager using proper types
-    let sent = state.agent_proxy.send_signal(&dna, &agent, signal_msg).await;
+    let sent = state
+        .agent_proxy
+        .send_signal(&dna, &agent, signal_msg)
+        .await;
 
     if sent {
         Json(TestSignalResponse {

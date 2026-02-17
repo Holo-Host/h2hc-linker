@@ -17,9 +17,7 @@ pub mod test_signal;
 pub mod websocket;
 pub mod zome_call;
 
-pub use dht::{dht_get_details, dht_get_links, dht_get_record};
-#[cfg(not(feature = "conductor-dht"))]
-pub use dht::dht_count_links;
+pub use dht::{dht_count_links, dht_get_details, dht_get_links, dht_get_record};
 pub use health::health_check;
 pub use kitsune::kitsune_routes;
 pub use publish::dht_publish;

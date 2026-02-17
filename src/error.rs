@@ -47,6 +47,10 @@ pub enum HcMembraneError {
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
 
+    /// Forbidden (authenticated but insufficient permissions)
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     /// Malformed request
     #[error("Request malformed: {0}")]
     RequestMalformed(String),
@@ -71,10 +75,12 @@ impl IntoResponse for HcMembraneError {
             HcMembraneError::HolochainError(e) => {
                 (StatusCode::BAD_GATEWAY, format!("Holochain error: {e}"))
             }
-            HcMembraneError::UpstreamUnavailable => {
-                (StatusCode::SERVICE_UNAVAILABLE, "Upstream unavailable".to_string())
-            }
+            HcMembraneError::UpstreamUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Upstream unavailable".to_string(),
+            ),
             HcMembraneError::AuthenticationFailed(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            HcMembraneError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             HcMembraneError::RequestMalformed(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         };
 
