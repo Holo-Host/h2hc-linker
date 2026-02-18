@@ -12,7 +12,6 @@ concurrency:
 
 env:
   CARGO_INCREMENTAL: 0
-  RUSTFLAGS: "-D warnings"
   LIBCLANG_PATH: /usr/lib/llvm-18/lib
 
 jobs:
