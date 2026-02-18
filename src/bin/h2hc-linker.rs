@@ -1,4 +1,4 @@
-//! hc-membrane binary entry point
+//! h2hc-linker binary entry point
 
 use clap::Parser;
 use hc_membrane::{Configuration, HcMembraneService};
@@ -11,10 +11,10 @@ use tracing_subscriber::{
 
 const DEFAULT_LOG_LEVEL: &str = "info";
 
-/// Command line arguments for hc-membrane
+/// Command line arguments for h2hc-linker
 #[derive(clap::Parser, Debug)]
-#[command(name = "hc-membrane")]
-#[command(about = "Holochain Membrane - Network edge gateway for lightweight clients")]
+#[command(name = "h2hc-linker")]
+#[command(about = "Holochain-to-Holochain Linker - Network edge gateway for lightweight clients")]
 pub struct Args {
     /// The address to bind to
     #[arg(short, long, env = "HC_MEMBRANE_ADDRESS", default_value = "127.0.0.1")]
@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
         address = %args.address,
         port = %args.port,
         kitsune_enabled = config.kitsune_enabled(),
-        "Starting hc-membrane"
+        "Starting h2hc-linker"
     );
 
     let service = HcMembraneService::new(args.address, args.port, config).await?;

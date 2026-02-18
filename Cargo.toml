@@ -7,8 +7,8 @@ license = "CAL-1.0"
 edition = "2021"
 
 [[bin]]
-name = "hc-membrane"
-path = "./src/bin/hc-membrane.rs"
+name = "h2hc-linker"
+path = "./src/bin/h2hc-linker.rs"
 
 [dependencies]
 anyhow = "1"
