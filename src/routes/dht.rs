@@ -7,7 +7,7 @@ use axum::Json;
 use holochain_types::prelude::{
     ActionHash, AgentPubKey, AnyDhtHash, AnyLinkableHash, EntryHash, ExternalHash,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::error::{HcMembraneError, HcMembraneResult};
 use crate::service::AppState;
@@ -34,7 +34,7 @@ use holochain_zome_types::validate::ValidationStatus;
 
 fn parse_dna_hash(s: &str) -> HcMembraneResult<holochain_types::dna::DnaHash> {
     holochain_types::dna::DnaHash::try_from(s)
-        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid DNA hash: {}", s)))
+        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid DNA hash: {s}")))
 }
 
 fn parse_any_dht_hash(s: &str) -> HcMembraneResult<AnyDhtHash> {
@@ -45,8 +45,7 @@ fn parse_any_dht_hash(s: &str) -> HcMembraneResult<AnyDhtHash> {
         return Ok(AnyDhtHash::from(hash));
     }
     Err(HcMembraneError::RequestMalformed(format!(
-        "Invalid DHT hash: {}",
-        s
+        "Invalid DHT hash: {s}"
     )))
 }
 
@@ -64,8 +63,7 @@ fn parse_any_linkable_hash(s: &str) -> HcMembraneResult<AnyLinkableHash> {
         return Ok(AnyLinkableHash::from(hash));
     }
     Err(HcMembraneError::RequestMalformed(format!(
-        "Invalid linkable hash: {}",
-        s
+        "Invalid linkable hash: {s}"
     )))
 }
 
@@ -330,12 +328,12 @@ pub struct MustGetAgentActivityBody {
 
 fn parse_agent_pubkey(s: &str) -> HcMembraneResult<AgentPubKey> {
     AgentPubKey::try_from(s)
-        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid agent pubkey: {}", s)))
+        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid agent pubkey: {s}")))
 }
 
 fn parse_action_hash(s: &str) -> HcMembraneResult<ActionHash> {
     ActionHash::try_from(s)
-        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid action hash: {}", s)))
+        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid action hash: {s}")))
 }
 
 /// GET /dht/{dna_hash}/agent_activity/{agent_hash}

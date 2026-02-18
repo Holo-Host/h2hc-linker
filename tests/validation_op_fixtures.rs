@@ -75,7 +75,7 @@ fn make_signed_action_hashed(action: Action) -> SignedActionHashed {
 
 fn make_entry() -> Entry {
     Entry::App(AppEntryBytes(
-        SerializedBytes::try_from(UnsafeBytes::from(vec![1u8, 2, 3, 4, 5])).unwrap(),
+        SerializedBytes::from(UnsafeBytes::from(vec![1u8, 2, 3, 4, 5])),
     ))
 }
 
@@ -96,7 +96,7 @@ fn generate_store_record_op_fixture() {
         inner_bytes
             .iter()
             .take(80)
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
 
@@ -110,7 +110,7 @@ fn generate_store_record_op_fixture() {
         extern_io_bytes
             .iter()
             .take(20)
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
 
@@ -145,7 +145,7 @@ fn generate_store_record_createlink_op_fixture() {
         inner_bytes
             .iter()
             .take(80)
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
 
@@ -171,7 +171,7 @@ fn generate_store_entry_op_fixture() {
             ),
             make_signature(),
         ),
-        entry: entry,
+        entry,
     });
 
     let inner_bytes = holochain_serialized_bytes::encode(&op).unwrap();
@@ -182,7 +182,7 @@ fn generate_store_entry_op_fixture() {
         inner_bytes
             .iter()
             .take(80)
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
 
@@ -243,14 +243,14 @@ fn deserialize_js_store_record_create() {
             }
         }
         Err(e) => {
-            println!("FAILED: {}", e);
+            println!("FAILED: {e}");
             // Show first 40 bytes as hex for debugging
             let hex: String = js_bytes
                 .iter()
                 .take(40)
-                .map(|b| format!("{:02x}", b))
+                .map(|b| format!("{b:02x}"))
                 .collect();
-            println!("  First 40 bytes: {}", hex);
+            println!("  First 40 bytes: {hex}");
         }
     }
 }
@@ -279,7 +279,7 @@ fn deserialize_js_store_record_createlink() {
             }
         }
         Err(e) => {
-            println!("FAILED: {}", e);
+            println!("FAILED: {e}");
         }
     }
 }
@@ -307,7 +307,7 @@ fn deserialize_js_register_create_link() {
             }
         }
         Err(e) => {
-            println!("FAILED: {}", e);
+            println!("FAILED: {e}");
         }
     }
 }

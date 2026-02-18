@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_proxy_agent_debug() {
         let agent = ProxyAgent::new(test_agent(0x78), test_agent_proxy());
-        let debug = format!("{:?}", agent);
+        let debug = format!("{agent:?}");
         assert!(debug.contains("ProxyAgent"));
         assert!(debug.contains("agent_id"));
     }

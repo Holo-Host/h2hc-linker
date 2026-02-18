@@ -941,7 +941,7 @@ mod tests {
     fn test_kitsune_proxy_creation() {
         let agent_proxy = AgentProxyManager::new();
         let proxy = KitsuneProxy::new(agent_proxy);
-        assert!(format!("{:?}", proxy).contains("KitsuneProxy"));
+        assert!(format!("{proxy:?}").contains("KitsuneProxy"));
     }
 
     #[test]
@@ -953,7 +953,7 @@ mod tests {
             agent_proxy,
             pending_dht_responses: PendingDhtResponses::new(),
         };
-        assert!(format!("{:?}", handler).contains("ProxySpaceHandler"));
+        assert!(format!("{handler:?}").contains("ProxySpaceHandler"));
     }
 
     #[test]
@@ -987,7 +987,7 @@ mod tests {
                 assert_eq!(zome_call_params_serialized.0, zome_call_params.0);
                 assert_eq!(decoded_sig.0.len(), 64);
             }
-            other => panic!("Expected RemoteSignalEvt, got {:?}", other),
+            other => panic!("Expected RemoteSignalEvt, got {other:?}"),
         }
     }
 
@@ -1086,7 +1086,7 @@ mod tests {
                     base64::engine::general_purpose::STANDARD.encode(&zome_call_params.0);
                 assert_eq!(signal, expected_signal);
             }
-            other => panic!("Expected Signal message, got {:?}", other),
+            other => panic!("Expected Signal message, got {other:?}"),
         }
     }
 
@@ -1166,7 +1166,7 @@ mod tests {
         let received = rx.await.expect("pending request should receive response");
         match received {
             WireMessage::GetRes { msg_id: id, .. } => assert_eq!(id, msg_id),
-            other => panic!("Expected GetRes, got {:?}", other),
+            other => panic!("Expected GetRes, got {other:?}"),
         }
     }
 
@@ -1205,7 +1205,7 @@ mod tests {
         let received = rx.await.expect("pending request should receive response");
         match received {
             WireMessage::GetLinksRes { msg_id: id, .. } => assert_eq!(id, msg_id),
-            other => panic!("Expected GetLinksRes, got {:?}", other),
+            other => panic!("Expected GetLinksRes, got {other:?}"),
         }
     }
 
@@ -1245,7 +1245,7 @@ mod tests {
                 assert_eq!(id, msg_id);
                 assert_eq!(error, "remote DHT error");
             }
-            other => panic!("Expected ErrorRes, got {:?}", other),
+            other => panic!("Expected ErrorRes, got {other:?}"),
         }
     }
 
@@ -1301,7 +1301,7 @@ mod tests {
                 assert_eq!(decoded_agent.get_raw_36(), to_agent.get_raw_36());
                 assert_eq!(dht_hash, &hash);
             }
-            other => panic!("Expected GetReq, got {:?}", other),
+            other => panic!("Expected GetReq, got {other:?}"),
         }
     }
 
@@ -1333,10 +1333,10 @@ mod tests {
                         assert!(ops.action.is_none());
                         assert!(ops.deletes.is_empty());
                     }
-                    other => panic!("Expected Record WireOps, got {:?}", other),
+                    other => panic!("Expected Record WireOps, got {other:?}"),
                 }
             }
-            other => panic!("Expected GetRes, got {:?}", other),
+            other => panic!("Expected GetRes, got {other:?}"),
         }
     }
 
@@ -1373,7 +1373,7 @@ mod tests {
                 assert_eq!(decoded_agent.get_raw_36(), to_agent.get_raw_36());
                 assert_eq!(decoded_key.base, link_key.base);
             }
-            other => panic!("Expected GetLinksReq, got {:?}", other),
+            other => panic!("Expected GetLinksReq, got {other:?}"),
         }
     }
 
@@ -1401,7 +1401,7 @@ mod tests {
                 assert!(response.creates.is_empty());
                 assert!(response.deletes.is_empty());
             }
-            other => panic!("Expected GetLinksRes, got {:?}", other),
+            other => panic!("Expected GetLinksRes, got {other:?}"),
         }
     }
 
@@ -1422,7 +1422,7 @@ mod tests {
                 assert_eq!(*id, msg_id);
                 assert_eq!(error, "something went wrong");
             }
-            other => panic!("Expected ErrorRes, got {:?}", other),
+            other => panic!("Expected ErrorRes, got {other:?}"),
         }
     }
 }

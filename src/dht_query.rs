@@ -213,7 +213,7 @@ impl DhtQuery {
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(|e| HcMembraneError::Internal(e))?;
+            .map_err(HcMembraneError::Internal)?;
 
         let loc = hash.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -281,7 +281,7 @@ impl DhtQuery {
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(|e| HcMembraneError::Internal(e))?;
+            .map_err(HcMembraneError::Internal)?;
 
         let loc = link_key.base.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -349,7 +349,7 @@ impl DhtQuery {
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(|e| HcMembraneError::Internal(e))?;
+            .map_err(HcMembraneError::Internal)?;
 
         let loc = query.base.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -729,7 +729,7 @@ impl DhtQuery {
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(|e| HcMembraneError::Internal(e))?;
+            .map_err(HcMembraneError::Internal)?;
 
         let loc = agent.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -801,7 +801,7 @@ impl DhtQuery {
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(|e| HcMembraneError::Internal(e))?;
+            .map_err(HcMembraneError::Internal)?;
 
         let loc = agent.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -1140,7 +1140,7 @@ mod tests {
     #[test]
     fn test_pending_dht_responses() {
         let pending = PendingDhtResponses::new();
-        assert!(format!("{:?}", pending).contains("PendingDhtResponses"));
+        assert!(format!("{pending:?}").contains("PendingDhtResponses"));
     }
 
     #[test]
@@ -1187,7 +1187,7 @@ mod tests {
                 msg_id: id,
                 response: _,
             } => assert_eq!(id, msg_id),
-            other => panic!("Expected GetRes, got {:?}", other),
+            other => panic!("Expected GetRes, got {other:?}"),
         }
     }
 
@@ -1217,7 +1217,7 @@ mod tests {
                 assert_eq!(id, msg_id);
                 assert!(response.creates.is_empty());
             }
-            other => panic!("Expected GetLinksRes, got {:?}", other),
+            other => panic!("Expected GetLinksRes, got {other:?}"),
         }
     }
 
@@ -1238,7 +1238,7 @@ mod tests {
         let received = rx.await.expect("channel should deliver response");
         match received {
             WireMessage::CountLinksRes { msg_id: id, .. } => assert_eq!(id, msg_id),
-            other => panic!("Expected CountLinksRes, got {:?}", other),
+            other => panic!("Expected CountLinksRes, got {other:?}"),
         }
     }
 
@@ -1264,7 +1264,7 @@ mod tests {
                 assert_eq!(id, msg_id);
                 assert_eq!(error, "test error");
             }
-            other => panic!("Expected ErrorRes, got {:?}", other),
+            other => panic!("Expected ErrorRes, got {other:?}"),
         }
     }
 
