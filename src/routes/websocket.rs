@@ -521,7 +521,7 @@ async fn handle_client_message(
                     Err(e) => {
                         tracing::warn!(?e, dna = %dna_hash, "Invalid DNA hash in send_remote_signal");
                         return Some(ServerMessage::Error {
-                            message: format!("Invalid DNA hash: {:?}", e),
+                            message: format!("Invalid DNA hash: {e:?}"),
                         });
                     }
                 };

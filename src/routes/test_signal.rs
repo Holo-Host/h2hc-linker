@@ -63,7 +63,7 @@ pub async fn test_signal(
             );
             return Json(TestSignalResponse {
                 success: false,
-                message: format!("Invalid DNA hash: {:?}", e),
+                message: format!("Invalid DNA hash: {e:?}"),
             });
         }
     };
@@ -78,7 +78,7 @@ pub async fn test_signal(
             );
             return Json(TestSignalResponse {
                 success: false,
-                message: format!("Invalid agent pubkey: {:?}", e),
+                message: format!("Invalid agent pubkey: {e:?}"),
             });
         }
     };
@@ -113,7 +113,7 @@ pub async fn test_signal(
     } else {
         Json(TestSignalResponse {
             success: false,
-            message: format!("No client registered for dna={}, agent={}", dna, agent),
+            message: format!("No client registered for dna={dna}, agent={agent}"),
         })
     }
 }

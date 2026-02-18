@@ -357,7 +357,7 @@ mod tests {
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
 
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, rx) = mpsc::channel(1);
         store.register_ws_sender(&test_agent(1), tx.clone()).await;
         assert_eq!(store.ws_connection_count(&test_agent(1)).await, 1);
 
