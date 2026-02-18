@@ -45,14 +45,14 @@
 ## Test Commands
 
 ```bash
-# Build hc-membrane
+# Build h2hc-linker
 nix develop --command cargo build
 
 # Run unit tests
 nix develop --command cargo test
 
 # Run with auth enabled
-HC_MEMBRANE_ADMIN_SECRET=test-secret nix develop --command cargo run -- --port 8090
+H2HC_LINKER_ADMIN_SECRET=test-secret nix develop --command cargo run -- --port 8090
 
 # Run without auth (backwards compatible)
 nix develop --command cargo run -- --port 8090

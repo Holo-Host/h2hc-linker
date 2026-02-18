@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Origin header for gateway connections.
-const GATEWAY_ORIGIN: &str = "hc-membrane";
+const GATEWAY_ORIGIN: &str = "h2hc-linker";
 
 /// App websocket connection manager.
 ///

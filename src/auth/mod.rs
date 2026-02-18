@@ -1,6 +1,6 @@
-//! Authentication and authorization layer for hc-membrane.
+//! Authentication and authorization layer for h2hc-linker.
 //!
-//! Gated on `HC_MEMBRANE_ADMIN_SECRET` -- when absent, all endpoints remain open.
+//! Gated on `H2HC_LINKER_ADMIN_SECRET` -- when absent, all endpoints remain open.
 
 pub mod admin;
 pub mod middleware;

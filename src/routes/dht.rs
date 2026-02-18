@@ -1,4 +1,4 @@
-//! DHT endpoints for hc-membrane.
+//! DHT endpoints for h2hc-linker.
 //!
 //! These endpoints query the DHT directly via kitsune2 wire protocol.
 

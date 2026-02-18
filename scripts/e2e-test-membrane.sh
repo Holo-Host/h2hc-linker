@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# End-to-End Test Script for hc-membrane Agent Registration
+# End-to-End Test Script for h2hc-linker Agent Registration
 #
-# This script tests that browser agents registered via hc-membrane's WebSocket
+# This script tests that browser agents registered via h2hc-linker's WebSocket
 # become visible in Holochain conductors' agent_infos.
 #
 # Usage:
 #   ./scripts/e2e-test-membrane.sh [command]
 #
 # Commands:
-#   start     Start bootstrap, conductor, and hc-membrane (default)
+#   start     Start bootstrap, conductor, and h2hc-linker (default)
 #   stop      Stop all services
 #   status    Show running services
 #   clean     Clean up sandbox data
@@ -17,13 +17,13 @@
 #
 # Prerequisites:
 #   - Run inside nix develop shell
-#   - Build hc-membrane: cargo build --release
+#   - Build h2hc-linker: cargo build --release
 #
 # What this tests:
 #   1. Starts bootstrap server (kitsune2 peer discovery)
 #   2. Starts a Holochain conductor with ziptest hApp
-#   3. Starts hc-membrane connected to same bootstrap
-#   4. Connects to hc-membrane WebSocket
+#   3. Starts h2hc-linker connected to same bootstrap
+#   4. Connects to h2hc-linker WebSocket
 #   5. Registers an agent via WebSocket
 #   6. Verifies the agent appears in conductor's agent_info
 
@@ -35,7 +35,7 @@ FISHY_DIR="$(cd "$PROJECT_DIR/../fishy" && pwd)"
 SANDBOX_DIR="$PROJECT_DIR/.hc-sandbox"
 
 # Ports
-MEMBRANE_PORT=8090
+LINKER_PORT=8090
 ADMIN_PORT=8888
 
 # Colors
@@ -83,8 +83,8 @@ check_prereqs() {
         exit 1
     fi
 
-    if [ ! -f "$PROJECT_DIR/target/release/hc-membrane" ]; then
-        log_warn "hc-membrane binary not found. Building..."
+    if [ ! -f "$PROJECT_DIR/target/release/h2hc-linker" ]; then
+        log_warn "h2hc-linker binary not found. Building..."
         (cd "$PROJECT_DIR" && cargo build --release)
     fi
 
@@ -206,40 +206,40 @@ EOF
     exit 1
 }
 
-# Start hc-membrane
-start_membrane() {
-    log_step "Starting hc-membrane..."
+# Start h2hc-linker
+start_linker() {
+    log_step "Starting h2hc-linker..."
 
     cd "$SANDBOX_DIR"
 
-    if [ -f membrane.pid ] && kill -0 "$(cat membrane.pid)" 2>/dev/null; then
-        log_warn "hc-membrane already running"
+    if [ -f linker.pid ] && kill -0 "$(cat linker.pid)" 2>/dev/null; then
+        log_warn "h2hc-linker already running"
         return 0
     fi
 
     BOOTSTRAP_ADDR=$(cat bootstrap_addr.txt)
 
-    # Start hc-membrane with kitsune2 configured
-    HC_MEMBRANE_BOOTSTRAP_URL="http://${BOOTSTRAP_ADDR}" \
-    HC_MEMBRANE_SIGNAL_URL="ws://${BOOTSTRAP_ADDR}" \
-    RUST_LOG="info,hc_membrane=debug,kitsune2=info" \
-    "$PROJECT_DIR/target/release/hc-membrane" --port "$MEMBRANE_PORT" \
-        > membrane.log 2>&1 &
+    # Start h2hc-linker with kitsune2 configured
+    H2HC_LINKER_BOOTSTRAP_URL="http://${BOOTSTRAP_ADDR}" \
+    H2HC_LINKER_SIGNAL_URL="ws://${BOOTSTRAP_ADDR}" \
+    RUST_LOG="info,h2hc_linker=debug,kitsune2=info" \
+    "$PROJECT_DIR/target/release/h2hc-linker" --port "$LINKER_PORT" \
+        > linker.log 2>&1 &
 
-    MEMBRANE_PID=$!
-    echo "$MEMBRANE_PID" > membrane.pid
+    LINKER_PID=$!
+    echo "$LINKER_PID" > linker.pid
 
-    log_info "Waiting for hc-membrane..."
+    log_info "Waiting for h2hc-linker..."
     for i in {1..10}; do
-        if curl -s "http://localhost:$MEMBRANE_PORT/health" > /dev/null 2>&1; then
-            log_info "hc-membrane started on port $MEMBRANE_PORT"
+        if curl -s "http://localhost:$LINKER_PORT/health" > /dev/null 2>&1; then
+            log_info "h2hc-linker started on port $LINKER_PORT"
             return 0
         fi
         sleep 1
     done
 
-    log_error "hc-membrane failed to start"
-    cat membrane.log
+    log_error "h2hc-linker failed to start"
+    cat linker.log
     exit 1
 }
 
@@ -249,7 +249,7 @@ stop_all() {
 
     cd "$SANDBOX_DIR" 2>/dev/null || true
 
-    for pidfile in membrane.pid conductor.pid bootstrap.pid; do
+    for pidfile in linker.pid conductor.pid bootstrap.pid; do
         if [ -f "$pidfile" ]; then
             PID=$(cat "$pidfile")
             if kill -0 "$PID" 2>/dev/null; then
@@ -263,7 +263,7 @@ stop_all() {
     # Clean up stale processes
     pkill -f "hc sandbox" 2>/dev/null || true
     pkill -f "holochain.*sandbox" 2>/dev/null || true
-    pkill -f "hc-membrane" 2>/dev/null || true
+    pkill -f "h2hc-linker" 2>/dev/null || true
     pkill -f "kitsune2-bootstrap" 2>/dev/null || true
 
     log_info "All services stopped"
@@ -278,7 +278,7 @@ show_status() {
         return
     }
 
-    for service in bootstrap conductor membrane; do
+    for service in bootstrap conductor linker; do
         pidfile="${service}.pid"
         if [ -f "$pidfile" ]; then
             PID=$(cat "$pidfile")
@@ -318,8 +318,8 @@ run_test() {
     cd "$SANDBOX_DIR"
 
     # Check services are running
-    if [ ! -f membrane.pid ] || ! kill -0 "$(cat membrane.pid)" 2>/dev/null; then
-        log_error "hc-membrane not running. Run: $0 start"
+    if [ ! -f linker.pid ] || ! kill -0 "$(cat linker.pid)" 2>/dev/null; then
+        log_error "h2hc-linker not running. Run: $0 start"
         exit 1
     fi
 
@@ -343,7 +343,7 @@ run_test() {
     log_info "Test parameters:"
     log_info "  DNA: $DNA_HASH"
     log_info "  Agent: $TEST_AGENT"
-    log_info "  Membrane: ws://localhost:$MEMBRANE_PORT/ws"
+    log_info "  Linker: ws://localhost:$LINKER_PORT/ws"
 
     # Connect to WebSocket and send auth + register messages
     log_step "Connecting to WebSocket and registering agent..."
@@ -352,10 +352,10 @@ run_test() {
     if command -v websocat &> /dev/null; then
         # Send auth and register messages
         (echo '{"type":"auth","session_token":""}'; sleep 0.5; echo "{\"type\":\"register\",\"dna_hash\":\"$DNA_HASH\",\"agent_pubkey\":\"$TEST_AGENT\"}"; sleep 2) | \
-            websocat "ws://localhost:$MEMBRANE_PORT/ws" 2>&1 | head -10 || true
+            websocat "ws://localhost:$LINKER_PORT/ws" 2>&1 | head -10 || true
     else
         log_warn "websocat not found, testing basic health endpoint instead"
-        curl -s "http://localhost:$MEMBRANE_PORT/health"
+        curl -s "http://localhost:$LINKER_PORT/health"
         echo ""
     fi
 
@@ -385,7 +385,7 @@ run_test() {
     log_info ""
     log_info "To test with real agent registration:"
     log_info "  1. Load fishy extension in browser"
-    log_info "  2. Configure gateway URL: http://localhost:$MEMBRANE_PORT"
+    log_info "  2. Configure gateway URL: http://localhost:$LINKER_PORT"
     log_info "  3. Install an hApp (use ziptest from ../fishy/fixtures/)"
     log_info "  4. The extension will register agents via WebSocket"
     log_info "  5. Check conductor: hc sandbox call --running=$ADMIN_PORT list-agents"
@@ -398,7 +398,7 @@ case "$COMMAND" in
         check_prereqs
         start_bootstrap
         start_conductor
-        start_membrane
+        start_linker
         show_status
         log_info ""
         log_info "Services started. Run test with: $0 test"

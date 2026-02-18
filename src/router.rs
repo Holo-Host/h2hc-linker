@@ -1,4 +1,4 @@
-//! Router configuration for hc-membrane
+//! Router configuration for h2hc-linker
 
 use axum::{
     routing::{delete, get, post},
@@ -17,7 +17,7 @@ use crate::routes::{
 };
 use crate::service::AppState;
 
-/// Create the main router for hc-membrane
+/// Create the main router for h2hc-linker
 pub fn create_router(app_state: AppState) -> Router {
     // CORS configuration - allow all origins for development
     let cors = CorsLayer::new()
@@ -32,7 +32,7 @@ pub fn create_router(app_state: AppState) -> Router {
     }
 }
 
-/// Router with no auth (current behavior when HC_MEMBRANE_ADMIN_SECRET is not set).
+/// Router with no auth (current behavior when H2HC_LINKER_ADMIN_SECRET is not set).
 fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
     Router::new()
         // Health check
@@ -68,7 +68,7 @@ fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
         .layer(cors)
 }
 
-/// Router with auth middleware (when HC_MEMBRANE_ADMIN_SECRET is set).
+/// Router with auth middleware (when H2HC_LINKER_ADMIN_SECRET is set).
 fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
     // DHT read routes
     let dht_read_routes = Router::new()

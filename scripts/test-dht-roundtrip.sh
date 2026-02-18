@@ -2,20 +2,20 @@
 #
 # DHT Query Round-Trip Test
 #
-# Tests whether hc-membrane can successfully query conductors via kitsune2
+# Tests whether h2hc-linker can successfully query conductors via kitsune2
 # wire protocol and receive responses. This is the core test for Step 19.3.
 #
 # Prerequisites:
 #   - nix develop shell (for holochain, hc, kitsune2-bootstrap-srv)
 #   - npm installed ws package (npm install ws)
-#   - hc-membrane built (cargo build --release)
+#   - h2hc-linker built (cargo build --release)
 #   - A hApp to install (fixture1 or any)
 #
 # Usage:
 #   ./scripts/test-dht-roundtrip.sh [--fishy-dir=PATH] [--happ=NAME]
 #
 # The script:
-#   1. Starts bootstrap server, 2 conductors, and hc-membrane gateway
+#   1. Starts bootstrap server, 2 conductors, and h2hc-linker gateway
 #   2. Registers a fake agent via WebSocket (triggers kitsune2 space join)
 #   3. Waits for peer discovery
 #   4. Queries DHT endpoints via curl with 10-second timeout
@@ -27,12 +27,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-SANDBOX_DIR="/tmp/hc-membrane-dht-test"
+SANDBOX_DIR="/tmp/h2hc-linker-dht-test"
 
 # Default paths
 FISHY_DIR="${FISHY_DIR:-$(cd "$PROJECT_DIR/../fishy-step19" 2>/dev/null && pwd || echo "")}"
 HAPP_NAME="fixture1"
-GATEWAY_BINARY="$PROJECT_DIR/target/release/hc-membrane"
+GATEWAY_BINARY="$PROJECT_DIR/target/release/h2hc-linker"
 
 # Parse arguments
 for arg in "$@"; do
@@ -98,7 +98,7 @@ trap cleanup EXIT
 # ============================================================================
 
 log_info "=== DHT Query Round-Trip Test ==="
-log_info "hc-membrane dir: $PROJECT_DIR"
+log_info "h2hc-linker dir: $PROJECT_DIR"
 log_info "Sandbox dir: $SANDBOX_DIR"
 
 # Check prerequisites
@@ -108,7 +108,7 @@ if ! command -v holochain &>/dev/null; then
 fi
 
 if [ ! -f "$GATEWAY_BINARY" ]; then
-    log_error "hc-membrane binary not found at $GATEWAY_BINARY"
+    log_error "h2hc-linker binary not found at $GATEWAY_BINARY"
     log_info "Build it: cargo build --release"
     exit 1
 fi
@@ -217,12 +217,12 @@ if [ -z "$DNA_HASH" ]; then
 fi
 log_info "DNA hash: $DNA_HASH"
 
-# 4. Start hc-membrane gateway
-log_info "Starting hc-membrane gateway..."
-HC_MEMBRANE_ADMIN_WS_URL="127.0.0.1:$ADMIN_PORT_1" \
-HC_MEMBRANE_BOOTSTRAP_URL="$BOOTSTRAP_URL" \
-HC_MEMBRANE_RELAY_URL="$BOOTSTRAP_URL" \
-RUST_LOG="info,hc_membrane=trace,kitsune2=debug" \
+# 4. Start h2hc-linker gateway
+log_info "Starting h2hc-linker gateway..."
+H2HC_LINKER_ADMIN_WS_URL="127.0.0.1:$ADMIN_PORT_1" \
+H2HC_LINKER_BOOTSTRAP_URL="$BOOTSTRAP_URL" \
+H2HC_LINKER_RELAY_URL="$BOOTSTRAP_URL" \
+RUST_LOG="info,h2hc_linker=trace,kitsune2=debug" \
 "$GATEWAY_BINARY" --port 8000 > "$SANDBOX_DIR/gateway.log" 2>&1 &
 echo "$!" > "$SANDBOX_DIR/gateway.pid"
 
@@ -378,7 +378,7 @@ echo -e "  Results: ${GREEN}$PASS_COUNT PASS${NC}  ${RED}$FAIL_COUNT FAIL${NC}"
 echo "============================================"
 echo ""
 echo "  Logs: $SANDBOX_DIR/"
-echo "    gateway.log     - hc-membrane (trace level)"
+echo "    gateway.log     - h2hc-linker (trace level)"
 echo "    conductor.log   - conductor 1 (holochain_p2p=trace)"
 echo "    conductor_2.log - conductor 2"
 echo "    ws-client.log   - WebSocket client"

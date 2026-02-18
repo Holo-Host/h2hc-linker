@@ -1,10 +1,10 @@
-# hc-membrane
+# h2hc-linker
 
 Network edge gateway providing DHT access for lightweight browser clients.
 
 ## Overview
 
-hc-membrane is designed to serve zero-arc Holochain nodes that don't participate in gossip. Instead, these lightweight clients (like browser extensions) fetch and publish data through the gateway.
+h2hc-linker is designed to serve zero-arc Holochain nodes that don't participate in gossip. Instead, these lightweight clients (like browser extensions) fetch and publish data through the gateway.
 
 ## API Design
 
@@ -44,13 +44,13 @@ cargo build --release
 
 ```bash
 # Default: localhost:8090
-./target/release/hc-membrane
+./target/release/h2hc-linker
 
 # Custom address/port
-./target/release/hc-membrane --address 0.0.0.0 --port 8080
+./target/release/h2hc-linker --address 0.0.0.0 --port 8080
 
 # Environment variables
-HC_MEMBRANE_ADDRESS=0.0.0.0 HC_MEMBRANE_PORT=8080 ./target/release/hc-membrane
+H2HC_LINKER_ADDRESS=0.0.0.0 H2HC_LINKER_PORT=8080 ./target/release/h2hc-linker
 ```
 
 ## Configuration
@@ -59,8 +59,8 @@ Environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HC_MEMBRANE_ADDRESS` | Bind address | `127.0.0.1` |
-| `HC_MEMBRANE_PORT` | Bind port | `8090` |
+| `H2HC_LINKER_ADDRESS` | Bind address | `127.0.0.1` |
+| `H2HC_LINKER_PORT` | Bind port | `8090` |
 | `BOOTSTRAP_URL` | Kitsune bootstrap server | None |
 | `SIGNAL_URL` | Kitsune signal server | None |
 

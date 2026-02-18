@@ -1,4 +1,4 @@
-//! Configuration for hc-membrane
+//! Configuration for h2hc-linker
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -48,11 +48,11 @@ pub struct Configuration {
     /// Timeout for zome calls
     pub zome_call_timeout: Duration,
 
-    /// Admin secret for authentication (from HC_MEMBRANE_ADMIN_SECRET)
+    /// Admin secret for authentication (from H2HC_LINKER_ADMIN_SECRET)
     /// When set, enables the auth layer.
     pub admin_secret: Option<String>,
 
-    /// Session token TTL (from HC_MEMBRANE_SESSION_TTL_SECS, default 3600)
+    /// Session token TTL (from H2HC_LINKER_SESSION_TTL_SECS, default 3600)
     pub session_ttl: Duration,
 }
 
@@ -77,40 +77,40 @@ impl Configuration {
         let mut config = Self::default();
 
         // Optional admin WebSocket for migration period
-        if let Ok(url) = std::env::var("HC_MEMBRANE_ADMIN_WS_URL") {
+        if let Ok(url) = std::env::var("H2HC_LINKER_ADMIN_WS_URL") {
             config.admin_socket_addr = Some(url.parse()?);
         }
 
         // Kitsune2 configuration (bootstrap URL is required)
-        match std::env::var("HC_MEMBRANE_BOOTSTRAP_URL") {
+        match std::env::var("H2HC_LINKER_BOOTSTRAP_URL") {
             Ok(url) => config.bootstrap_url = url,
             Err(_) => {
                 return Err(anyhow::anyhow!(
-                    "HC_MEMBRANE_BOOTSTRAP_URL is required. \
-                     hc-membrane cannot operate without kitsune2 networking. \
+                    "H2HC_LINKER_BOOTSTRAP_URL is required. \
+                     h2hc-linker cannot operate without kitsune2 networking. \
                      Set it to your bootstrap server URL (e.g. http://127.0.0.1:PORT)"
                 ));
             }
         }
-        if let Ok(url) = std::env::var("HC_MEMBRANE_RELAY_URL") {
+        if let Ok(url) = std::env::var("H2HC_LINKER_RELAY_URL") {
             config.relay_url = Some(url);
         }
 
         // Payload limit
-        if let Ok(limit) = std::env::var("HC_MEMBRANE_PAYLOAD_LIMIT_BYTES") {
+        if let Ok(limit) = std::env::var("H2HC_LINKER_PAYLOAD_LIMIT_BYTES") {
             config.payload_limit_bytes = limit.parse()?;
         }
 
         // Zome call timeout
-        if let Ok(timeout) = std::env::var("HC_MEMBRANE_ZOME_CALL_TIMEOUT_MS") {
+        if let Ok(timeout) = std::env::var("H2HC_LINKER_ZOME_CALL_TIMEOUT_MS") {
             config.zome_call_timeout = Duration::from_millis(timeout.parse()?);
         }
 
         // Auth configuration
-        if let Ok(secret) = std::env::var("HC_MEMBRANE_ADMIN_SECRET") {
+        if let Ok(secret) = std::env::var("H2HC_LINKER_ADMIN_SECRET") {
             config.admin_secret = Some(secret);
         }
-        if let Ok(ttl) = std::env::var("HC_MEMBRANE_SESSION_TTL_SECS") {
+        if let Ok(ttl) = std::env::var("H2HC_LINKER_SESSION_TTL_SECS") {
             config.session_ttl = Duration::from_secs(ttl.parse()?);
         }
 

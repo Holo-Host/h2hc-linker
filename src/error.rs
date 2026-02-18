@@ -1,14 +1,14 @@
-//! Error types for hc-membrane
+//! Error types for h2hc-linker
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use holochain_client::ConductorApiError;
 use serde::Serialize;
 
-/// Result type for hc-membrane operations
+/// Result type for h2hc-linker operations
 pub type HcMembraneResult<T> = Result<T, HcMembraneError>;
 
-/// Error type for hc-membrane operations
+/// Error type for h2hc-linker operations
 #[derive(Debug, thiserror::Error)]
 pub enum HcMembraneError {
     /// Configuration error

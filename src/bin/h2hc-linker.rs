@@ -17,11 +17,11 @@ const DEFAULT_LOG_LEVEL: &str = "info";
 #[command(about = "Holochain-to-Holochain Linker - Network edge gateway for lightweight clients")]
 pub struct Args {
     /// The address to bind to
-    #[arg(short, long, env = "HC_MEMBRANE_ADDRESS", default_value = "127.0.0.1")]
+    #[arg(short, long, env = "H2HC_LINKER_ADDRESS", default_value = "127.0.0.1")]
     pub address: IpAddr,
 
     /// The port to bind to
-    #[arg(short, long, env = "HC_MEMBRANE_PORT", default_value = "8090")]
+    #[arg(short, long, env = "H2HC_LINKER_PORT", default_value = "8090")]
     pub port: u16,
 }
 

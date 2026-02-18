@@ -1,4 +1,4 @@
-//! Service for running hc-membrane
+//! Service for running h2hc-linker
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -32,11 +32,11 @@ pub struct AppState {
     pub temp_op_store: Option<TempOpStoreHandle>,
     /// DHT query handler for direct kitsune2 queries
     pub dht_query: Option<DhtQuery>,
-    /// Auth store (if auth enabled via HC_MEMBRANE_ADMIN_SECRET)
+    /// Auth store (if auth enabled via H2HC_LINKER_ADMIN_SECRET)
     pub auth_store: Option<AuthStore>,
 }
 
-/// The main hc-membrane service
+/// The main h2hc-linker service
 pub struct HcMembraneService {
     addr: SocketAddr,
     app_state: AppState,
@@ -123,12 +123,12 @@ impl HcMembraneService {
 
         // Create auth store if auth is enabled
         let auth_store = if config.auth_enabled() {
-            tracing::info!("Authentication enabled (HC_MEMBRANE_ADMIN_SECRET set)");
+            tracing::info!("Authentication enabled (H2HC_LINKER_ADMIN_SECRET set)");
             let store = AuthStore::new(config.session_ttl);
             store.start_cleanup_task();
             Some(store)
         } else {
-            tracing::info!("Authentication disabled (no HC_MEMBRANE_ADMIN_SECRET)");
+            tracing::info!("Authentication disabled (no H2HC_LINKER_ADMIN_SECRET)");
             None
         };
 
@@ -150,7 +150,7 @@ impl HcMembraneService {
     pub async fn run(self) -> HcMembraneResult<()> {
         let router = create_router(self.app_state);
 
-        tracing::info!("Starting hc-membrane on {}", self.addr);
+        tracing::info!("Starting h2hc-linker on {}", self.addr);
 
         let listener = TcpListener::bind(self.addr)
             .await

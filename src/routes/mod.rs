@@ -1,4 +1,4 @@
-//! HTTP routes for hc-membrane
+//! HTTP routes for h2hc-linker
 //!
 //! ## API Structure
 //!

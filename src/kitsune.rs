@@ -1,4 +1,4 @@
-//! Kitsune2 instance builder and minimal handler for hc-membrane
+//! Kitsune2 instance builder and minimal handler for h2hc-linker
 //!
 //! This module creates a Kitsune2 instance for the liveness endpoints.
 //! It provides a minimal `KitsuneHandler` implementation that does not
@@ -34,7 +34,7 @@ impl KitsuneHandler for MinimalKitsuneHandler {
     }
 
     fn new_listening_address(&self, this_url: Url) -> BoxFut<'static, ()> {
-        info!(%this_url, "hc-membrane kitsune2 listening on new address");
+        info!(%this_url, "h2hc-linker kitsune2 listening on new address");
         Box::pin(async move {})
     }
 
@@ -124,7 +124,7 @@ impl SpaceHandler for MinimalSpaceHandler {
     }
 }
 
-/// Builder for creating a Kitsune2 instance for hc-membrane.
+/// Builder for creating a Kitsune2 instance for h2hc-linker.
 ///
 /// # Example
 ///
@@ -214,7 +214,7 @@ impl KitsuneBuilder {
         let handler: Arc<dyn KitsuneHandler> = Arc::new(MinimalKitsuneHandler);
         kitsune.register_handler(handler).await?;
 
-        info!("hc-membrane kitsune2 instance created");
+        info!("h2hc-linker kitsune2 instance created");
         Ok(kitsune)
     }
 }

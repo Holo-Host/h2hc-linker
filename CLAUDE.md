@@ -1,12 +1,12 @@
-# hc-membrane
+# h2hc-linker
 
-> Holochain Membrane - Network edge gateway providing DHT access for lightweight clients
+> Holochain-to-Holochain Linker - Network edge gateway providing DHT access for lightweight clients
 
 ## Quick Context (READ FIRST)
 
 **Current Step**: See [STEPS/index.md](./STEPS/index.md) for status registry
 
-**What This Is**: A network edge gateway that allows lightweight clients (browsers, mobile) to interact with the Holochain DHT without running a full conductor. Like a cell membrane, it provides selective access between clients and the DHT network.
+**What This Is**: A network edge gateway that allows lightweight clients (browsers, mobile) to interact with the Holochain DHT without running a full conductor. It provides selective access between clients and the DHT network.
 
 **What This Is NOT**: This is not "Holochain Lite" - there is no source chain, no validation, no full node capabilities. Zero-arc only.
 
@@ -44,7 +44,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         hc-membrane                                  │
+│                         h2hc-linker                                  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │ DHT Endpoints (/dht/*)                                       │   │
@@ -128,7 +128,7 @@ Testing is done via the **fishy** browser extension and **ziptest** hApp:
 - **Test app**: ziptest hApp at `../fishy/fixtures/ziptest.happ`
 - **E2E test page**: `../fishy/packages/extension/test/e2e-gateway-test.html`
 
-### Testing hc-membrane Changes
+### Testing h2hc-linker Changes
 
 Testing requirements vary by step:
 
@@ -146,10 +146,10 @@ curl http://localhost:8090/k2/status
 
 **M2+ (with DHT endpoints)**: Full ziptest integration
 ```bash
-# 1. Build hc-membrane (always use nix develop)
+# 1. Build h2hc-linker (always use nix develop)
 nix develop --command cargo build --release
 
-# 2. Run e2e setup with hc-membrane (requires --gateway=membrane flag, added in M2)
+# 2. Run e2e setup with h2hc-linker (requires --gateway=membrane flag, added in M2)
 cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
 
 # 3. Load fishy extension in browser, test with ziptest UI
@@ -160,10 +160,10 @@ cd ../fishy && npm run test:integration
 
 ### e2e-test-setup.sh Adaptation
 
-As hc-membrane development progresses, `../fishy/scripts/e2e-test-setup.sh` should be adapted:
+As h2hc-linker development progresses, `../fishy/scripts/e2e-test-setup.sh` should be adapted:
 
-1. **M2**: Add `--gateway=membrane` flag to switch between hc-http-gw-fork and hc-membrane
-2. **M6**: Default to hc-membrane, deprecate hc-http-gw-fork path
+1. **M2**: Add `--gateway=membrane` flag to switch between hc-http-gw-fork and h2hc-linker
+2. **M6**: Default to h2hc-linker, deprecate hc-http-gw-fork path
 3. **M7**: Remove hc-http-gw-fork support entirely
 
 ### Test Checkpoints

@@ -1,4 +1,4 @@
-//! # Holochain Membrane (hc-membrane)
+//! # Holochain-to-Holochain Linker (h2hc-linker)
 //!
 //! Network edge gateway providing DHT access for lightweight browser clients.
 //!
