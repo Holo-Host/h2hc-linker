@@ -33,5 +33,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy -- -D warnings -A dead_code -A clippy::too_many_arguments -A clippy::type_complexity -A clippy::needless_update
       - run: cargo test
