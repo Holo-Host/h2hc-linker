@@ -918,7 +918,11 @@ impl DhtQuery {
                 Err(HcMembraneError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
-                warn!(msg_id, ?other, "Got unexpected response type for get_agent_activity");
+                warn!(
+                    msg_id,
+                    ?other,
+                    "Got unexpected response type for get_agent_activity"
+                );
                 Err(HcMembraneError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
@@ -927,7 +931,11 @@ impl DhtQuery {
                 "Response channel closed".to_string(),
             )),
             Err(_) => {
-                warn!(msg_id, timeout_secs = timeout.as_secs(), "GetAgentActivity request TIMED OUT");
+                warn!(
+                    msg_id,
+                    timeout_secs = timeout.as_secs(),
+                    "GetAgentActivity request TIMED OUT"
+                );
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }
@@ -989,7 +997,11 @@ impl DhtQuery {
                 Err(HcMembraneError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
-                warn!(msg_id, ?other, "Got unexpected response type for must_get_agent_activity");
+                warn!(
+                    msg_id,
+                    ?other,
+                    "Got unexpected response type for must_get_agent_activity"
+                );
                 Err(HcMembraneError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
@@ -998,7 +1010,11 @@ impl DhtQuery {
                 "Response channel closed".to_string(),
             )),
             Err(_) => {
-                warn!(msg_id, timeout_secs = timeout.as_secs(), "MustGetAgentActivity request TIMED OUT");
+                warn!(
+                    msg_id,
+                    timeout_secs = timeout.as_secs(),
+                    "MustGetAgentActivity request TIMED OUT"
+                );
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }
@@ -1068,7 +1084,11 @@ impl DhtQuery {
                 Err(HcMembraneError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
-                warn!(msg_id, ?other, "Got unexpected response type for count_links");
+                warn!(
+                    msg_id,
+                    ?other,
+                    "Got unexpected response type for count_links"
+                );
                 Err(HcMembraneError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
@@ -1080,7 +1100,11 @@ impl DhtQuery {
                 ))
             }
             Err(_) => {
-                warn!(msg_id, timeout_secs = timeout.as_secs(), "CountLinks request TIMED OUT");
+                warn!(
+                    msg_id,
+                    timeout_secs = timeout.as_secs(),
+                    "CountLinks request TIMED OUT"
+                );
                 Err(HcMembraneError::Internal("Request timed out".to_string()))
             }
         }
@@ -1337,7 +1361,10 @@ mod tests {
 
         // msg_id=20 should have received response
         let received = rx2.await.expect("rx2 should get response");
-        assert!(matches!(received, WireMessage::GetLinksRes { msg_id: 20, .. }));
+        assert!(matches!(
+            received,
+            WireMessage::GetLinksRes { msg_id: 20, .. }
+        ));
 
         // msg_id=10 should still be pending (not consumed)
         // Route its response now

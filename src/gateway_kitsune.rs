@@ -1285,9 +1285,7 @@ mod tests {
     #[test]
     fn test_wire_message_encode_decode_get_req() {
         let to_agent = test_agent(0xab);
-        let hash = holo_hash::AnyDhtHash::from(
-            holo_hash::ActionHash::from_raw_32(vec![0x11; 32]),
-        );
+        let hash = holo_hash::AnyDhtHash::from(holo_hash::ActionHash::from_raw_32(vec![0x11; 32]));
         let (_msg_id, req) = WireMessage::get_req(to_agent.clone(), hash.clone());
 
         let encoded = WireMessage::encode_batch(&[&req]).expect("encode");
@@ -1349,9 +1347,8 @@ mod tests {
         use holochain_types::prelude::LinkTypeFilter;
 
         let to_agent = test_agent(0xcc);
-        let base = holo_hash::AnyLinkableHash::from(
-            holo_hash::EntryHash::from_raw_32(vec![0x22; 32]),
-        );
+        let base =
+            holo_hash::AnyLinkableHash::from(holo_hash::EntryHash::from_raw_32(vec![0x22; 32]));
         let link_key = WireLinkKey {
             base,
             type_query: LinkTypeFilter::Types(vec![]),
@@ -1421,10 +1418,7 @@ mod tests {
         assert_eq!(decoded.len(), 1);
 
         match &decoded[0] {
-            WireMessage::ErrorRes {
-                msg_id: id,
-                error,
-            } => {
+            WireMessage::ErrorRes { msg_id: id, error } => {
                 assert_eq!(*id, msg_id);
                 assert_eq!(error, "something went wrong");
             }

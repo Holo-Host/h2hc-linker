@@ -89,10 +89,7 @@ fn generate_store_record_op_fixture() {
 
     // Serialize using holochain_serialized_bytes (rmp-serde with struct_map)
     let inner_bytes = holochain_serialized_bytes::encode(&op).unwrap();
-    println!(
-        "StoreRecord Op inner bytes ({} bytes):",
-        inner_bytes.len()
-    );
+    println!("StoreRecord Op inner bytes ({} bytes):", inner_bytes.len());
     println!("  base64: {}", STANDARD.encode(&inner_bytes));
     println!(
         "  first 80 hex: {}",
@@ -106,10 +103,7 @@ fn generate_store_record_op_fixture() {
     // Also show ExternIO wrapping (what actually goes to WASM memory)
     let extern_io = ExternIO::encode(&op).unwrap();
     let extern_io_bytes = holochain_serialized_bytes::encode(&extern_io).unwrap();
-    println!(
-        "\nExternIO-wrapped ({} bytes):",
-        extern_io_bytes.len()
-    );
+    println!("\nExternIO-wrapped ({} bytes):", extern_io_bytes.len());
     println!("  base64: {}", STANDARD.encode(&extern_io_bytes));
     println!(
         "  first 20 hex: {}",
@@ -181,10 +175,7 @@ fn generate_store_entry_op_fixture() {
     });
 
     let inner_bytes = holochain_serialized_bytes::encode(&op).unwrap();
-    println!(
-        "StoreEntry Op inner bytes ({} bytes):",
-        inner_bytes.len()
-    );
+    println!("StoreEntry Op inner bytes ({} bytes):", inner_bytes.len());
     println!("  base64: {}", STANDARD.encode(&inner_bytes));
     println!(
         "  first 80 hex: {}",
@@ -254,7 +245,9 @@ fn deserialize_js_store_record_create() {
         Err(e) => {
             println!("FAILED: {}", e);
             // Show first 40 bytes as hex for debugging
-            let hex: String = js_bytes.iter().take(40)
+            let hex: String = js_bytes
+                .iter()
+                .take(40)
                 .map(|b| format!("{:02x}", b))
                 .collect();
             println!("  First 40 bytes: {}", hex);
@@ -268,7 +261,10 @@ fn deserialize_js_store_record_createlink() {
     let js_b64 = "gatTdG9yZVJlY29yZIGmcmVjb3Jkgq1zaWduZWRfYWN0aW9ugqZoYXNoZWSCp2NvbnRlbnSLpHR5cGWqQ3JlYXRlTGlua6ZhdXRob3LEJ4QgJBERERERERERERERERERERERERERERERERERERERERER/UGvt6l0aW1lc3RhbXDPAAYN1xAhIACqYWN0aW9uX3NlcQircHJldl9hY3Rpb27EJ4QpJCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIivhNJZKxiYXNlX2FkZHJlc3PEJ4QhJDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz2wLUX650YXJnZXRfYWRkcmVzc8QnhCEkRERERERERERERERERERERERERERERERERERERERERER7z3URqnpvbWVfaW5kZXgAqWxpbmtfdHlwZQCjdGFnxAMBAgOmd2VpZ2h0gqlidWNrZXRfaWQApXVuaXRzAKRoYXNoxCeEKSSqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqseyERSpc2lnbmF0dXJlxEC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7pWVudHJ5ok5B";
 
     let js_bytes = STANDARD.decode(js_b64).unwrap();
-    println!("JS StoreRecord (CreateLink) bytes: {} bytes", js_bytes.len());
+    println!(
+        "JS StoreRecord (CreateLink) bytes: {} bytes",
+        js_bytes.len()
+    );
 
     let result: Result<Op, _> = holochain_serialized_bytes::decode(&js_bytes);
     match result {
@@ -302,7 +298,10 @@ fn deserialize_js_register_create_link() {
             println!("SUCCESS: JS bytes deserialized to Op");
             match &op {
                 Op::RegisterCreateLink(rcl) => {
-                    println!("  CreateLink zome_index: {:?}", rcl.create_link.hashed.content.zome_index);
+                    println!(
+                        "  CreateLink zome_index: {:?}",
+                        rcl.create_link.hashed.content.zome_index
+                    );
                 }
                 _ => println!("  Wrong variant: expected RegisterCreateLink"),
             }

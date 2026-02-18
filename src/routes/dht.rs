@@ -22,9 +22,9 @@ use holochain_zome_types::link::Link;
 use holochain_types::action::WireNewEntryAction;
 use holochain_types::dht_op::WireOps;
 use holochain_types::entry::WireEntryOps;
+use holochain_types::prelude::ActionHashed;
 use holochain_types::record::WireRecordOps;
 use holochain_zome_types::metadata::{Details, EntryDetails, EntryDhtStatus, RecordDetails};
-use holochain_types::prelude::ActionHashed;
 use holochain_zome_types::record::{Record, SignedActionHashed};
 use holochain_zome_types::validate::ValidationStatus;
 
@@ -463,8 +463,7 @@ fn wire_record_ops_to_details(record_ops: &WireRecordOps) -> serde_json::Value {
 
     // Compute action hash and build SignedActionHashed
     let action_hashed = ActionHashed::from_content_sync(action.clone());
-    let signed_action_hashed =
-        SignedActionHashed::with_presigned(action_hashed, signature);
+    let signed_action_hashed = SignedActionHashed::with_presigned(action_hashed, signature);
 
     // Build record with entry
     let record = Record::new(signed_action_hashed, record_ops.entry.clone());
@@ -574,8 +573,7 @@ fn wire_entry_ops_to_details(entry_ops: &WireEntryOps) -> serde_json::Value {
         };
 
         let action_hashed = ActionHashed::from_content_sync(full_action);
-        let signed_action_hashed =
-            SignedActionHashed::with_presigned(action_hashed, signature);
+        let signed_action_hashed = SignedActionHashed::with_presigned(action_hashed, signature);
 
         let is_valid = judged_create
             .status
@@ -914,9 +912,9 @@ mod tests {
         };
 
         let entry_ops = WireEntryOps {
-            creates: vec![Judged::valid(WireNewEntryAction::Create(
-                test_wire_create(),
-            ))],
+            creates: vec![Judged::valid(
+                WireNewEntryAction::Create(test_wire_create()),
+            )],
             deletes: vec![],
             updates: vec![],
             entry: Some(entry_data),
@@ -974,9 +972,9 @@ mod tests {
         };
 
         let entry_ops = WireEntryOps {
-            creates: vec![Judged::valid(WireNewEntryAction::Create(
-                test_wire_create(),
-            ))],
+            creates: vec![Judged::valid(
+                WireNewEntryAction::Create(test_wire_create()),
+            )],
             deletes: vec![Judged::valid(wire_delete)],
             updates: vec![],
             entry: Some(entry_data),
@@ -1128,9 +1126,9 @@ mod tests {
         };
 
         let entry_ops = WireEntryOps {
-            creates: vec![Judged::valid(WireNewEntryAction::Create(
-                test_wire_create(),
-            ))],
+            creates: vec![Judged::valid(
+                WireNewEntryAction::Create(test_wire_create()),
+            )],
             deletes: vec![],
             updates: vec![],
             entry: Some(entry_data),
@@ -1139,5 +1137,4 @@ mod tests {
         let result = wire_ops_to_details_json(&WireOps::Entry(entry_ops));
         assert_eq!(result["type"], "Entry");
     }
-
 }
