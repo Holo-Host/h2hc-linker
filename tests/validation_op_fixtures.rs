@@ -74,9 +74,9 @@ fn make_signed_action_hashed(action: Action) -> SignedActionHashed {
 }
 
 fn make_entry() -> Entry {
-    Entry::App(AppEntryBytes(
-        SerializedBytes::from(UnsafeBytes::from(vec![1u8, 2, 3, 4, 5])),
-    ))
+    Entry::App(AppEntryBytes(SerializedBytes::from(UnsafeBytes::from(
+        vec![1u8, 2, 3, 4, 5],
+    ))))
 }
 
 #[test]

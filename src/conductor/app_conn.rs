@@ -3,8 +3,8 @@
 use crate::conductor::AdminConn;
 use crate::error::{HcMembraneError, HcMembraneResult};
 use holochain_client::{
-    AppInfo, AppWebsocket, CellId, ClientAgentSigner, ConnectRequest, ExternIO,
-    GrantedFunctions, IssueAppAuthenticationTokenPayload, WebsocketConfig, ZomeCallTarget,
+    AppInfo, AppWebsocket, CellId, ClientAgentSigner, ConnectRequest, ExternIO, GrantedFunctions,
+    IssueAppAuthenticationTokenPayload, WebsocketConfig, ZomeCallTarget,
 };
 use holochain_conductor_api::{AppStatusFilter, CellInfo};
 use holochain_types::dna::DnaHash;
