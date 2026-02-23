@@ -9,9 +9,9 @@
 //! in the browser extension.
 
 use crate::routes::websocket::ServerMessage;
-use base64::Engine;
 use bytes::Bytes;
 use holochain_types::prelude::{AgentPubKey, DnaHash};
+use kitsune2_api::AgentInfo;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -222,24 +222,25 @@ impl AgentProxyManager {
         None
     }
 
-    /// Request a signature from a browser agent.
+    /// Request a signature from a browser agent for agent info.
     ///
-    /// This sends a sign request to the browser via WebSocket and waits for
-    /// the response. The browser will use its local Lair keystore to sign
-    /// the message with the agent's private key.
+    /// This sends structured agent info fields to the browser so it can
+    /// validate what it's signing (transparent signing protocol). The browser
+    /// constructs the canonical JSON from the structured fields, validates it,
+    /// and signs it with the agent's private key from Lair.
     ///
     /// # Arguments
     ///
     /// * `agent_pubkey` - The agent's public key
-    /// * `message` - The bytes to sign
+    /// * `agent_info` - The structured agent info to be signed
     ///
     /// # Returns
     ///
     /// The signature bytes, or an error if signing failed.
-    pub async fn request_signature(
+    pub async fn request_agent_info_signature(
         &self,
         agent_pubkey: &AgentPubKey,
-        message: &[u8],
+        agent_info: &AgentInfo,
     ) -> SignResult {
         // Find a sender for this agent
         let sender = match self.find_sender_for_agent(agent_pubkey).await {
@@ -270,11 +271,15 @@ impl AgentProxyManager {
             pending.insert(request_id.clone(), tx);
         }
 
-        // Send sign request to browser - use URL_SAFE_NO_PAD to match Holochain encoding
-        let sign_request = ServerMessage::SignRequest {
+        // Serialize agent info to a JSON value for the browser to inspect and validate
+        let agent_info_value = serde_json::to_value(agent_info)
+            .map_err(|e| format!("Failed to serialize agent info: {e}"))?;
+
+        // Send structured sign request to browser (transparent signing protocol)
+        let sign_request = ServerMessage::SignAgentInfo {
             request_id: request_id.clone(),
             agent_pubkey: agent_pubkey.to_string(),
-            message: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(message),
+            agent_info: agent_info_value,
         };
 
         if let Err(e) = sender.send(sign_request).await {
@@ -286,8 +291,7 @@ impl AgentProxyManager {
         tracing::debug!(
             request_id = %request_id,
             agent = %agent_pubkey,
-            message_len = message.len(),
-            "Sent sign request to browser"
+            "Sent agent info sign request to browser"
         );
 
         // Wait for response with timeout

@@ -139,14 +139,17 @@ pub enum ServerMessage {
         /// Error description.
         message: String,
     },
-    /// Request browser to sign data with agent's private key.
-    SignRequest {
+    /// Request browser to sign agent info with agent's private key.
+    /// Sends structured agent info fields so the browser can validate
+    /// what it's signing (transparent signing protocol).
+    SignAgentInfo {
         /// Unique request ID for correlating response.
         request_id: String,
-        /// Agent public key that should sign (base64 encoded).
+        /// Agent public key that should sign (HoloHash base64 encoded).
         agent_pubkey: String,
-        /// Data to sign (base64 encoded bytes).
-        message: String,
+        /// Structured agent info fields for the browser to validate and
+        /// reconstruct the canonical JSON to sign.
+        agent_info: serde_json::Value,
     },
 }
 
@@ -774,6 +777,29 @@ mod tests {
         let msg = ServerMessage::Pong;
         let json = serde_json::to_string(&msg).unwrap();
         assert_eq!(json, r#"{"type":"pong"}"#);
+    }
+
+    #[test]
+    fn test_server_message_sign_agent_info() {
+        let agent_info = serde_json::json!({
+            "agent": "dGVzdC1hZ2VudA",
+            "space": "dGVzdC1zcGFjZQ",
+            "createdAt": "1731690797907204",
+            "expiresAt": "1731762797907204",
+            "isTombstone": false,
+            "url": "ws://test.com:80/test-url",
+            "storageArc": [42, 330382099]
+        });
+        let msg = ServerMessage::SignAgentInfo {
+            request_id: "sign-0-123".to_string(),
+            agent_pubkey: "uhCAkAQEB".to_string(),
+            agent_info,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"sign_agent_info""#));
+        assert!(json.contains(r#""request_id":"sign-0-123""#));
+        assert!(json.contains(r#""agent_pubkey":"uhCAkAQEB""#));
+        assert!(json.contains(r#""agent":"dGVzdC1hZ2VudA""#));
     }
 
     #[test]

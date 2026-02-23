@@ -93,23 +93,27 @@ impl ProxyAgent {
 impl Signer for ProxyAgent {
     fn sign<'a, 'b: 'a, 'c: 'a>(
         &'a self,
-        _agent_info: &'b AgentInfo,
-        message: &'c [u8],
+        agent_info: &'b AgentInfo,
+        _message: &'c [u8],
     ) -> BoxFut<'a, K2Result<Bytes>> {
         // Delegate signing to the browser via WebSocket.
+        // Send structured agent info so the browser can validate and
+        // construct the canonical JSON to sign (transparent signing protocol).
         // The browser will sign with its local Lair keystore and return the signature.
         let agent_proxy = self.agent_proxy.clone();
         let agent_pubkey = self.agent_pubkey.clone();
-        let message = message.to_vec();
+        let agent_info = agent_info.clone();
 
         Box::pin(async move {
             debug!(
                 agent = %agent_pubkey,
-                message_len = message.len(),
-                "Requesting remote signature from browser"
+                "Requesting remote agent info signature from browser"
             );
 
-            match agent_proxy.request_signature(&agent_pubkey, &message).await {
+            match agent_proxy
+                .request_agent_info_signature(&agent_pubkey, &agent_info)
+                .await
+            {
                 Ok(signature) => {
                     debug!(
                         agent = %agent_pubkey,
