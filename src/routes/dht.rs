@@ -948,7 +948,10 @@ mod tests {
             "Record JSON must have signed_action field, got keys: {:?}",
             obj.keys().collect::<Vec<_>>()
         );
-        assert!(obj.contains_key("entry"), "Record JSON must have entry field");
+        assert!(
+            obj.contains_key("entry"),
+            "Record JSON must have entry field"
+        );
 
         // signed_action should have hashed.content and signature
         let sa = &obj["signed_action"];
@@ -978,7 +981,9 @@ mod tests {
         };
 
         let entry_ops = WireEntryOps {
-            creates: vec![Judged::valid(WireNewEntryAction::Create(test_wire_create()))],
+            creates: vec![Judged::valid(
+                WireNewEntryAction::Create(test_wire_create()),
+            )],
             deletes: vec![],
             updates: vec![],
             entry: Some(entry_data),
