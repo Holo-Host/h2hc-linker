@@ -118,7 +118,7 @@ pub async fn dht_get_record(
 
     match result {
         Some(wire_ops) => {
-            let json_value = wire_ops_to_json(&wire_ops);
+            let json_value = wire_ops_to_record_json(&wire_ops);
             Ok(Json(json_value))
         }
         None => Ok(Json(serde_json::Value::Null)),
@@ -419,17 +419,39 @@ pub async fn dht_must_get_agent_activity(
 // Wire type to JSON conversion (for direct DHT mode)
 // ============================================================================
 
-/// Convert WireOps to JSON.
-fn wire_ops_to_json(ops: &holochain_types::dht_op::WireOps) -> serde_json::Value {
-    // Serialize the WireOps directly to JSON
-    // This preserves the full structure for debugging and compatibility
-    match serde_json::to_value(ops) {
-        Ok(json) => json,
-        Err(e) => {
-            tracing::warn!("Failed to serialize WireOps: {}", e);
-            serde_json::Value::Null
-        }
+/// Convert WireOps to a flat Record JSON matching Holochain's get return type.
+///
+/// WireOps are the condensed wire protocol format. This function reconstructs the full
+/// Record (signed_action + entry) that Holochain returns from get calls.
+/// Returns null if the WireOps variant doesn't contain a record or has no action.
+fn wire_ops_to_record_json(ops: &WireOps) -> serde_json::Value {
+    match ops {
+        WireOps::Record(record_ops) => wire_record_ops_to_record(record_ops),
+        WireOps::Entry(_) | WireOps::Warrant(_) => serde_json::Value::Null,
     }
+}
+
+/// Convert WireRecordOps to a flat Record JSON.
+///
+/// Reconstructs SignedActionHashed + entry from the condensed wire format,
+/// producing the same JSON shape as Holochain's Record type:
+/// { "signed_action": { "hashed": { "content": ..., "hash": ... }, "signature": ... }, "entry": ... }
+fn wire_record_ops_to_record(record_ops: &WireRecordOps) -> serde_json::Value {
+    let judged_signed_action = match &record_ops.action {
+        Some(a) => a,
+        None => return serde_json::Value::Null,
+    };
+
+    let signed_action = &judged_signed_action.data;
+    let action: &Action = signed_action.data();
+    let signature = signed_action.signature().clone();
+
+    let action_hashed = ActionHashed::from_content_sync(action.clone());
+    let signed_action_hashed = SignedActionHashed::with_presigned(action_hashed, signature);
+
+    let record = Record::new(signed_action_hashed, record_ops.entry.clone());
+
+    serde_json::to_value(&record).unwrap_or(serde_json::Value::Null)
 }
 
 /// Convert WireOps to the Details JSON format matching Holochain's get_details return type.
@@ -712,7 +734,10 @@ mod tests {
     use holochain_types::record::WireRecordOps;
     use holochain_zome_types::judged::Judged;
 
-    use super::{wire_entry_ops_to_details, wire_ops_to_details_json, wire_record_ops_to_details};
+    use super::{
+        wire_entry_ops_to_details, wire_ops_to_details_json, wire_ops_to_record_json,
+        wire_record_ops_to_details, wire_record_ops_to_record,
+    };
 
     fn test_agent() -> AgentPubKey {
         AgentPubKey::from_raw_32(vec![1; 32])
@@ -896,6 +921,94 @@ mod tests {
         // Should still produce valid Details::Record with null entry in the record
         let obj = result.as_object().expect("should be object");
         assert_eq!(obj["type"], "Record");
+    }
+
+    // ========================================================================
+    // wire_record_ops_to_record tests (flat Record for get endpoint)
+    // ========================================================================
+
+    #[test]
+    fn test_wire_record_ops_to_record_basic() {
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(test_entry()),
+        };
+
+        let result = wire_record_ops_to_record(&record_ops);
+
+        // Should produce a flat Record with signed_action at top level
+        let obj = result.as_object().expect("should be object");
+        assert!(
+            obj.contains_key("signed_action"),
+            "Record JSON must have signed_action field, got keys: {:?}",
+            obj.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            obj.contains_key("entry"),
+            "Record JSON must have entry field"
+        );
+
+        // signed_action should have hashed.content and signature
+        let sa = &obj["signed_action"];
+        assert!(sa["hashed"]["content"].is_object());
+        assert!(sa["hashed"]["hash"].is_array());
+        assert!(sa["signature"].is_array());
+    }
+
+    #[test]
+    fn test_wire_record_ops_to_record_no_action_returns_null() {
+        let record_ops = WireRecordOps {
+            action: None,
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        };
+
+        let result = wire_record_ops_to_record(&record_ops);
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_wire_ops_to_record_json_entry_variant_returns_null() {
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(
+                WireNewEntryAction::Create(test_wire_create()),
+            )],
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+
+        // Entry variant should return null from the record endpoint
+        let result = wire_ops_to_record_json(&WireOps::Entry(entry_ops));
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_wire_ops_to_record_json_record_variant() {
+        let action = test_create_action();
+        let signed_action = SignedAction::new(action, test_signature());
+
+        let record_ops = WireRecordOps {
+            action: Some(Judged::valid(signed_action)),
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(test_entry()),
+        };
+
+        let result = wire_ops_to_record_json(&WireOps::Record(record_ops));
+        let obj = result.as_object().expect("should be object");
+        assert!(obj.contains_key("signed_action"));
     }
 
     // ========================================================================
