@@ -64,6 +64,25 @@ Environment variables:
 | `BOOTSTRAP_URL` | Kitsune bootstrap server | None |
 | `SIGNAL_URL` | Kitsune signal server | None |
 
+## Releasing
+
+Releases are triggered by pushing a git tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+This runs the GitHub Actions release workflow which builds binaries for:
+- Linux x86_64
+- Linux aarch64
+- macOS x86_64
+- macOS aarch64 (Apple Silicon)
+
+All binaries are uploaded to a GitHub Release. Tags containing `-` (e.g., `v0.1.0-rc.1`) are marked as prereleases.
+
+See [COMPATIBILITY.md](./COMPATIBILITY.md) for version compatibility with the [Holo Web Conductor](https://github.com/Holo-Host/holo-web-conductor) extension.
+
 ## License
 
 CAL-1.0 (Cryptographic Autonomy License)
