@@ -30,10 +30,6 @@ jobs:
             asset_name: h2hc-linker-linux-aarch64
             cross_compile: true
 
-          - target: x86_64-apple-darwin
-            runner: macos-13
-            asset_name: h2hc-linker-macos-x86_64
-
           - target: aarch64-apple-darwin
             runner: macos-latest
             asset_name: h2hc-linker-macos-aarch64
@@ -97,11 +93,19 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check that at least one build succeeded
+        run: |
+          if [ "${{ needs.build.result }}" = "failure" ]; then
+            echo "All build jobs failed"
+            exit 1
+          fi
 
       - uses: actions/download-artifact@v4
         with:
@@ -110,14 +114,13 @@ jobs:
       - name: Flatten artifacts
         run: find artifacts/ -type f -exec mv {} . \;
 
+      - name: List available artifacts
+        run: ls -la h2hc-linker-* || echo "No artifacts found"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            h2hc-linker-linux-x86_64
-            h2hc-linker-linux-aarch64
-            h2hc-linker-macos-x86_64
-            h2hc-linker-macos-aarch64
+          files: h2hc-linker-*
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

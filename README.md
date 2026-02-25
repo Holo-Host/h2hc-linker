@@ -76,7 +76,6 @@ git push origin v0.1.0
 This runs the GitHub Actions release workflow which builds binaries for:
 - Linux x86_64
 - Linux aarch64
-- macOS x86_64
 - macOS aarch64 (Apple Silicon)
 
 All binaries are uploaded to a GitHub Release. Tags containing `-` (e.g., `v0.1.0-rc.1`) are marked as prereleases.
