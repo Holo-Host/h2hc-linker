@@ -339,6 +339,8 @@ pub struct KitsuneProxyBuilder {
     bootstrap_url: Option<String>,
     relay_url: Option<String>,
     op_store_factory: Option<kitsune2_api::DynOpStoreFactory>,
+    report_factory: Option<kitsune2_api::DynReportFactory>,
+    report_config: Option<crate::linker_report::HcReportConfig>,
 }
 
 impl KitsuneProxyBuilder {
@@ -349,6 +351,8 @@ impl KitsuneProxyBuilder {
             bootstrap_url: None,
             relay_url: None,
             op_store_factory: None,
+            report_factory: None,
+            report_config: None,
         }
     }
 
@@ -372,6 +376,20 @@ impl KitsuneProxyBuilder {
         self
     }
 
+    /// Set a custom ReportFactory for kitsune2 usage reporting.
+    ///
+    /// If not set, the default (no-op) report factory will be used.
+    /// The `config` provides the report-specific settings (path, retention, interval).
+    pub fn with_report(
+        mut self,
+        factory: kitsune2_api::DynReportFactory,
+        config: crate::linker_report::HcReportConfig,
+    ) -> Self {
+        self.report_factory = Some(factory);
+        self.report_config = Some(config);
+        self
+    }
+
     /// Build the kitsune2 instance.
     pub async fn build(self) -> Result<DynKitsune, Box<dyn std::error::Error + Send + Sync>> {
         use kitsune2::default_builder;
@@ -385,6 +403,11 @@ impl KitsuneProxyBuilder {
         // Replace op_store factory if a custom one was provided
         if let Some(op_store_factory) = self.op_store_factory {
             builder.op_store = op_store_factory;
+        }
+
+        // Replace report factory if a custom one was provided
+        if let Some(report_factory) = self.report_factory {
+            builder.report = report_factory;
         }
 
         // Wrap the bootstrap factory to capture AgentInfoSigned for preflight.
@@ -407,6 +430,14 @@ impl KitsuneProxyBuilder {
                     ..Default::default()
                 },
             })?;
+        }
+
+        // Configure report module if a custom config was provided
+        if let Some(hc_report) = self.report_config {
+            use crate::linker_report::HcReportModConfig;
+            builder
+                .config
+                .set_module_config(&HcReportModConfig { hc_report })?;
         }
 
         // Configure core space settings (matching conductor settings)

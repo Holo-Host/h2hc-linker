@@ -41,6 +41,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 url = "2"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
@@ -50,6 +51,7 @@ assert2 = "0.3"
 http-body-util = "0.1"
 mockall = "0.13"
 reqwest = { version = "0.12", default-features = false }
+tempfile = "3"
 tower = "0.5"
 
 [features]

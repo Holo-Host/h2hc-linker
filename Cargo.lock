@@ -1836,11 +1836,13 @@ dependencies = [
  "rmp-serde",
  "rustls",
  "serde",
+ "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "url",
 ]

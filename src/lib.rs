@@ -24,6 +24,7 @@ pub(crate) mod dht_query;
 mod error;
 pub(crate) mod gateway_kitsune;
 mod kitsune;
+pub(crate) mod linker_report;
 pub(crate) mod proxy_agent;
 mod router;
 pub(crate) mod service;

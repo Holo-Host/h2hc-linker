@@ -1,7 +1,29 @@
 //! Configuration for h2hc-linker
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
+
+/// Configure Kitsune2 Reporting.
+///
+/// Matches the conductor's `ReportConfig` enum so the log-collector
+/// can process linker and conductor reports identically.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportConfig {
+    /// No reporting (default).
+    #[default]
+    None,
+
+    /// Write daily-rotated JSONL report files (`hc-report.YYYY-MM-DD.jsonl`).
+    JsonLines {
+        /// How many days worth of report files to retain.
+        days_retained: u32,
+
+        /// How often to report Fetched-Op aggregated data in seconds.
+        fetched_op_interval_s: u32,
+    },
+}
 
 /// Default timeout for zome calls
 pub const DEFAULT_ZOME_CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -54,6 +76,12 @@ pub struct Configuration {
 
     /// Session token TTL (from H2HC_LINKER_SESSION_TTL_SECS, default 3600)
     pub session_ttl: Duration,
+
+    /// Kitsune2 report configuration (from H2HC_LINKER_REPORT)
+    pub report: ReportConfig,
+
+    /// Directory path for report files (from H2HC_LINKER_REPORT_PATH)
+    pub report_path: PathBuf,
 }
 
 impl Default for Configuration {
@@ -67,6 +95,8 @@ impl Default for Configuration {
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
             admin_secret: None,
             session_ttl: Duration::from_secs(3600),
+            report: ReportConfig::None,
+            report_path: PathBuf::from("/tmp/h2hc-linker-reports"),
         }
     }
 }
@@ -104,6 +134,37 @@ impl Configuration {
         // Zome call timeout
         if let Ok(timeout) = std::env::var("H2HC_LINKER_ZOME_CALL_TIMEOUT_MS") {
             config.zome_call_timeout = Duration::from_millis(timeout.parse()?);
+        }
+
+        // Report configuration
+        if let Ok(report_type) = std::env::var("H2HC_LINKER_REPORT") {
+            match report_type.to_lowercase().as_str() {
+                "json_lines" | "jsonlines" | "jsonl" => {
+                    let days_retained: u32 = std::env::var("H2HC_LINKER_REPORT_DAYS_RETAINED")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(5);
+                    let fetched_op_interval_s: u32 =
+                        std::env::var("H2HC_LINKER_REPORT_INTERVAL_S")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(60);
+                    config.report = ReportConfig::JsonLines {
+                        days_retained,
+                        fetched_op_interval_s,
+                    };
+                }
+                "none" | "" => {}
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "Unknown H2HC_LINKER_REPORT value: '{}'. Use 'json_lines' or 'none'.",
+                        other
+                    ));
+                }
+            }
+        }
+        if let Ok(path) = std::env::var("H2HC_LINKER_REPORT_PATH") {
+            config.report_path = PathBuf::from(path);
         }
 
         // Auth configuration

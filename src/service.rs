@@ -75,6 +75,27 @@ impl HcMembraneService {
                 builder = builder.with_relay_url(relay_url);
             }
 
+            // Configure reporting if enabled
+            if let crate::config::ReportConfig::JsonLines {
+                days_retained,
+                fetched_op_interval_s,
+            } = &config.report
+            {
+                tracing::info!(
+                    days_retained,
+                    fetched_op_interval_s,
+                    path = %config.report_path.display(),
+                    "Enabling kitsune2 reporting (JsonLines)"
+                );
+                let report_factory = crate::linker_report::LinkerReportFactory::create();
+                let report_config = crate::linker_report::HcReportConfig {
+                    days_retained: *days_retained,
+                    path: config.report_path.clone(),
+                    fetched_op_interval_s: *fetched_op_interval_s,
+                };
+                builder = builder.with_report(report_factory, report_config);
+            }
+
             match builder.build().await {
                 Ok(k) => {
                     tracing::info!("Kitsune2 instance created successfully");
