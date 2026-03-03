@@ -1,7 +1,7 @@
 //! h2hc-linker binary entry point
 
 use clap::Parser;
-use hc_membrane::{Configuration, HcMembraneService};
+use h2hc_linker::{Configuration, LinkerService};
 use std::net::IpAddr;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan, time::UtcTime},
@@ -44,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting h2hc-linker"
     );
 
-    let service = HcMembraneService::new(args.address, args.port, config).await?;
+    let service = LinkerService::new(args.address, args.port, config).await?;
     service.run().await?;
 
     Ok(())

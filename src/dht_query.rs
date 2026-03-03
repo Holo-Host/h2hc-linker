@@ -41,7 +41,7 @@ use std::time::Duration;
 use tokio::sync::{oneshot, RwLock};
 use tracing::{debug, info, warn};
 
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use crate::gateway_kitsune::GatewayKitsune;
 
 /// Number of peers to query in parallel (same as holochain_p2p)
@@ -204,16 +204,12 @@ impl DhtQuery {
     ///
     /// Queries multiple peers near the hash location in parallel and returns
     /// the first non-empty response.
-    pub async fn get(
-        &self,
-        dna_hash: &DnaHash,
-        hash: AnyDhtHash,
-    ) -> HcMembraneResult<Option<WireOps>> {
+    pub async fn get(&self, dna_hash: &DnaHash, hash: AnyDhtHash) -> LinkerResult<Option<WireOps>> {
         let space = self
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(HcMembraneError::Internal)?;
+            .map_err(LinkerError::Internal)?;
 
         let loc = hash.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -276,12 +272,12 @@ impl DhtQuery {
         &self,
         dna_hash: &DnaHash,
         link_key: WireLinkKey,
-    ) -> HcMembraneResult<Option<WireLinkOps>> {
+    ) -> LinkerResult<Option<WireLinkOps>> {
         let space = self
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(HcMembraneError::Internal)?;
+            .map_err(LinkerError::Internal)?;
 
         let loc = link_key.base.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -344,12 +340,12 @@ impl DhtQuery {
         &self,
         dna_hash: &DnaHash,
         query: WireLinkQuery,
-    ) -> HcMembraneResult<Option<CountLinksResponse>> {
+    ) -> LinkerResult<Option<CountLinksResponse>> {
         let space = self
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(HcMembraneError::Internal)?;
+            .map_err(LinkerError::Internal)?;
 
         let loc = query.base.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -409,7 +405,7 @@ impl DhtQuery {
         &self,
         space: &DynSpace,
         loc: u32,
-    ) -> HcMembraneResult<Vec<(AgentPubKey, Url)>> {
+    ) -> LinkerResult<Vec<(AgentPubKey, Url)>> {
         // First log what we have in peer store
         match space.peer_store().get_all().await {
             Ok(all_peers) => {
@@ -454,7 +450,7 @@ impl DhtQuery {
             1024,
         )
         .await
-        .map_err(|e| HcMembraneError::Internal(format!("Failed to get peers: {e}")))?;
+        .map_err(|e| LinkerError::Internal(format!("Failed to get peers: {e}")))?;
 
         info!(
             responsive_count = agents.len(),
@@ -488,7 +484,7 @@ impl DhtQuery {
         hash: AnyDhtHash,
         pending: PendingDhtResponses,
         timeout: Duration,
-    ) -> HcMembraneResult<Option<WireOps>> {
+    ) -> LinkerResult<Option<WireOps>> {
         let (msg_id, req) = WireMessage::get_req(to_agent.clone(), hash.clone());
 
         info!(
@@ -500,7 +496,7 @@ impl DhtQuery {
         );
 
         let encoded = WireMessage::encode_batch(&[&req])
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+            .map_err(|e| LinkerError::Internal(format!("Failed to encode request: {e}")))?;
 
         info!(
             msg_id,
@@ -549,7 +545,7 @@ impl DhtQuery {
                     error = %e,
                     "send_notify FAILED"
                 );
-                return Err(HcMembraneError::Internal(format!(
+                return Err(LinkerError::Internal(format!(
                     "Failed to send request: {e}"
                 )));
             }
@@ -568,19 +564,17 @@ impl DhtQuery {
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
                 warn!(msg_id, %error, "Got ErrorRes response");
-                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+                Err(LinkerError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
                 warn!(msg_id, ?other, "Got unexpected response type");
-                Err(HcMembraneError::Internal(format!(
+                Err(LinkerError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
             }
             Ok(Err(_)) => {
                 warn!(msg_id, "Response channel closed (receiver dropped)");
-                Err(HcMembraneError::Internal(
-                    "Response channel closed".to_string(),
-                ))
+                Err(LinkerError::Internal("Response channel closed".to_string()))
             }
             Err(_) => {
                 warn!(
@@ -588,7 +582,7 @@ impl DhtQuery {
                     timeout_secs = timeout.as_secs(),
                     "Request TIMED OUT - no response received"
                 );
-                Err(HcMembraneError::Internal("Request timed out".to_string()))
+                Err(LinkerError::Internal("Request timed out".to_string()))
             }
         }
     }
@@ -601,7 +595,7 @@ impl DhtQuery {
         link_key: WireLinkKey,
         pending: PendingDhtResponses,
         timeout: Duration,
-    ) -> HcMembraneResult<Option<WireLinkOps>> {
+    ) -> LinkerResult<Option<WireLinkOps>> {
         use holochain_p2p::event::GetLinksOptions;
 
         let (msg_id, req) =
@@ -616,7 +610,7 @@ impl DhtQuery {
         );
 
         let encoded = WireMessage::encode_batch(&[&req])
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+            .map_err(|e| LinkerError::Internal(format!("Failed to encode request: {e}")))?;
 
         info!(
             msg_id,
@@ -665,7 +659,7 @@ impl DhtQuery {
                     error = %e,
                     "send_notify FAILED"
                 );
-                return Err(HcMembraneError::Internal(format!(
+                return Err(LinkerError::Internal(format!(
                     "Failed to send request: {e}"
                 )));
             }
@@ -689,19 +683,17 @@ impl DhtQuery {
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
                 warn!(msg_id, %error, "Got ErrorRes response");
-                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+                Err(LinkerError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
                 warn!(msg_id, ?other, "Got unexpected response type");
-                Err(HcMembraneError::Internal(format!(
+                Err(LinkerError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
             }
             Ok(Err(_)) => {
                 warn!(msg_id, "Response channel closed (receiver dropped)");
-                Err(HcMembraneError::Internal(
-                    "Response channel closed".to_string(),
-                ))
+                Err(LinkerError::Internal("Response channel closed".to_string()))
             }
             Err(_) => {
                 warn!(
@@ -709,7 +701,7 @@ impl DhtQuery {
                     timeout_secs = timeout.as_secs(),
                     "GetLinks request TIMED OUT - no response received"
                 );
-                Err(HcMembraneError::Internal("Request timed out".to_string()))
+                Err(LinkerError::Internal("Request timed out".to_string()))
             }
         }
     }
@@ -724,12 +716,12 @@ impl DhtQuery {
         agent: AgentPubKey,
         query: ChainQueryFilter,
         options: GetActivityOptions,
-    ) -> HcMembraneResult<Option<AgentActivityResponse>> {
+    ) -> LinkerResult<Option<AgentActivityResponse>> {
         let space = self
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(HcMembraneError::Internal)?;
+            .map_err(LinkerError::Internal)?;
 
         let loc = agent.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -796,12 +788,12 @@ impl DhtQuery {
         dna_hash: &DnaHash,
         agent: AgentPubKey,
         filter: ChainFilter,
-    ) -> HcMembraneResult<Option<MustGetAgentActivityResponse>> {
+    ) -> LinkerResult<Option<MustGetAgentActivityResponse>> {
         let space = self
             .gateway_kitsune
             .get_or_create_space(dna_hash)
             .await
-            .map_err(HcMembraneError::Internal)?;
+            .map_err(LinkerError::Internal)?;
 
         let loc = agent.get_loc();
         let agents = self.get_peers_for_location(&space, loc).await?;
@@ -871,7 +863,7 @@ impl DhtQuery {
         options: GetActivityOptions,
         pending: PendingDhtResponses,
         timeout: Duration,
-    ) -> HcMembraneResult<Option<AgentActivityResponse>> {
+    ) -> LinkerResult<Option<AgentActivityResponse>> {
         let (msg_id, req) =
             WireMessage::get_agent_activity_req(to_agent.clone(), agent.clone(), query, options);
 
@@ -884,7 +876,7 @@ impl DhtQuery {
         );
 
         let encoded = WireMessage::encode_batch(&[&req])
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+            .map_err(|e| LinkerError::Internal(format!("Failed to encode request: {e}")))?;
 
         let (tx, rx) = oneshot::channel();
         pending.register(msg_id, tx).await;
@@ -902,7 +894,7 @@ impl DhtQuery {
             }
             Err(e) => {
                 warn!(msg_id, %to_url, error = %e, "GetAgentActivityReq send_notify FAILED");
-                return Err(HcMembraneError::Internal(format!(
+                return Err(LinkerError::Internal(format!(
                     "Failed to send request: {e}"
                 )));
             }
@@ -915,7 +907,7 @@ impl DhtQuery {
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
                 warn!(msg_id, %error, "Got ErrorRes for get_agent_activity");
-                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+                Err(LinkerError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
                 warn!(
@@ -923,20 +915,18 @@ impl DhtQuery {
                     ?other,
                     "Got unexpected response type for get_agent_activity"
                 );
-                Err(HcMembraneError::Internal(format!(
+                Err(LinkerError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
             }
-            Ok(Err(_)) => Err(HcMembraneError::Internal(
-                "Response channel closed".to_string(),
-            )),
+            Ok(Err(_)) => Err(LinkerError::Internal("Response channel closed".to_string())),
             Err(_) => {
                 warn!(
                     msg_id,
                     timeout_secs = timeout.as_secs(),
                     "GetAgentActivity request TIMED OUT"
                 );
-                Err(HcMembraneError::Internal("Request timed out".to_string()))
+                Err(LinkerError::Internal("Request timed out".to_string()))
             }
         }
     }
@@ -950,7 +940,7 @@ impl DhtQuery {
         filter: ChainFilter,
         pending: PendingDhtResponses,
         timeout: Duration,
-    ) -> HcMembraneResult<Option<MustGetAgentActivityResponse>> {
+    ) -> LinkerResult<Option<MustGetAgentActivityResponse>> {
         let (msg_id, req) =
             WireMessage::must_get_agent_activity_req(to_agent.clone(), agent.clone(), filter);
 
@@ -963,7 +953,7 @@ impl DhtQuery {
         );
 
         let encoded = WireMessage::encode_batch(&[&req])
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+            .map_err(|e| LinkerError::Internal(format!("Failed to encode request: {e}")))?;
 
         let (tx, rx) = oneshot::channel();
         pending.register(msg_id, tx).await;
@@ -981,7 +971,7 @@ impl DhtQuery {
             }
             Err(e) => {
                 warn!(msg_id, %to_url, error = %e, "MustGetAgentActivityReq send_notify FAILED");
-                return Err(HcMembraneError::Internal(format!(
+                return Err(LinkerError::Internal(format!(
                     "Failed to send request: {e}"
                 )));
             }
@@ -994,7 +984,7 @@ impl DhtQuery {
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
                 warn!(msg_id, %error, "Got ErrorRes for must_get_agent_activity");
-                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+                Err(LinkerError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
                 warn!(
@@ -1002,20 +992,18 @@ impl DhtQuery {
                     ?other,
                     "Got unexpected response type for must_get_agent_activity"
                 );
-                Err(HcMembraneError::Internal(format!(
+                Err(LinkerError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
             }
-            Ok(Err(_)) => Err(HcMembraneError::Internal(
-                "Response channel closed".to_string(),
-            )),
+            Ok(Err(_)) => Err(LinkerError::Internal("Response channel closed".to_string())),
             Err(_) => {
                 warn!(
                     msg_id,
                     timeout_secs = timeout.as_secs(),
                     "MustGetAgentActivity request TIMED OUT"
                 );
-                Err(HcMembraneError::Internal("Request timed out".to_string()))
+                Err(LinkerError::Internal("Request timed out".to_string()))
             }
         }
     }
@@ -1028,7 +1016,7 @@ impl DhtQuery {
         query: WireLinkQuery,
         pending: PendingDhtResponses,
         timeout: Duration,
-    ) -> HcMembraneResult<Option<CountLinksResponse>> {
+    ) -> LinkerResult<Option<CountLinksResponse>> {
         let (msg_id, req) = WireMessage::count_links_req(to_agent.clone(), query.clone());
 
         info!(
@@ -1040,7 +1028,7 @@ impl DhtQuery {
         );
 
         let encoded = WireMessage::encode_batch(&[&req])
-            .map_err(|e| HcMembraneError::Internal(format!("Failed to encode request: {e}")))?;
+            .map_err(|e| LinkerError::Internal(format!("Failed to encode request: {e}")))?;
 
         // Register pending request
         let (tx, rx) = oneshot::channel();
@@ -1067,7 +1055,7 @@ impl DhtQuery {
             }
             Err(e) => {
                 warn!(msg_id, %to_url, error = %e, "CountLinksReq send_notify FAILED");
-                return Err(HcMembraneError::Internal(format!(
+                return Err(LinkerError::Internal(format!(
                     "Failed to send request: {e}"
                 )));
             }
@@ -1081,7 +1069,7 @@ impl DhtQuery {
             }
             Ok(Ok(WireMessage::ErrorRes { error, .. })) => {
                 warn!(msg_id, %error, "Got ErrorRes for count_links");
-                Err(HcMembraneError::Internal(format!("Remote error: {error}")))
+                Err(LinkerError::Internal(format!("Remote error: {error}")))
             }
             Ok(Ok(other)) => {
                 warn!(
@@ -1089,15 +1077,13 @@ impl DhtQuery {
                     ?other,
                     "Got unexpected response type for count_links"
                 );
-                Err(HcMembraneError::Internal(format!(
+                Err(LinkerError::Internal(format!(
                     "Unexpected response: {other:?}"
                 )))
             }
             Ok(Err(_)) => {
                 warn!(msg_id, "Response channel closed (receiver dropped)");
-                Err(HcMembraneError::Internal(
-                    "Response channel closed".to_string(),
-                ))
+                Err(LinkerError::Internal("Response channel closed".to_string()))
             }
             Err(_) => {
                 warn!(
@@ -1105,7 +1091,7 @@ impl DhtQuery {
                     timeout_secs = timeout.as_secs(),
                     "CountLinks request TIMED OUT"
                 );
-                Err(HcMembraneError::Internal("Request timed out".to_string()))
+                Err(LinkerError::Internal("Request timed out".to_string()))
             }
         }
     }

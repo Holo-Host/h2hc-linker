@@ -120,10 +120,7 @@ impl ReportFactory for LinkerReportFactory {
 /// Type sent on our internal command channel.
 enum Cmd {
     /// Indicates we have received op data from a remote peer.
-    FetchedOp {
-        space_id: SpaceId,
-        size_bytes: u64,
-    },
+    FetchedOp { space_id: SpaceId, size_bytes: u64 },
 }
 
 struct LinkerReport {
@@ -165,10 +162,7 @@ impl std::fmt::Debug for LinkerReport {
 }
 
 impl LinkerReport {
-    pub fn create(
-        config: HcReportConfig,
-        signing_key: SigningKey,
-    ) -> K2Result<Arc<LinkerReport>> {
+    pub fn create(config: HcReportConfig, signing_key: SigningKey) -> K2Result<Arc<LinkerReport>> {
         // Build the agent pubkey string for report entries.
         // Use the same format as holochain: "u" prefix + base64url of 39-byte AgentPubKey.
         let pubkey_bytes = signing_key.verifying_key().to_bytes();
@@ -419,10 +413,7 @@ mod tests {
             }
         }
 
-        assert!(
-            found_ops,
-            "expected a FetchedOps entry in the report file"
-        );
+        assert!(found_ops, "expected a FetchedOps entry in the report file");
     }
 
     /// Integration test that exercises the full report pipeline and verifies:
@@ -490,7 +481,11 @@ mod tests {
             if name.starts_with("hc-report.") && name.ends_with(".jsonl") {
                 // Verify file naming: hc-report.YYYY-MM-DD.jsonl
                 let parts: Vec<&str> = name.split('.').collect();
-                assert_eq!(parts.len(), 3, "file name should have 3 dot-separated parts");
+                assert_eq!(
+                    parts.len(),
+                    3,
+                    "file name should have 3 dot-separated parts"
+                );
                 assert_eq!(parts[0], "hc-report");
                 assert_eq!(parts[2], "jsonl");
                 // Date part should be YYYY-MM-DD
@@ -570,8 +565,9 @@ mod tests {
             // Verify signature using ed25519_dalek directly
             let to_verify = ops.encode_for_verification();
             assert_eq!(ops.signatures.len(), 1, "should have exactly 1 signature");
-            let sig_bytes =
-                base64::prelude::BASE64_URL_SAFE_NO_PAD.decode(&ops.signatures[0]).unwrap();
+            let sig_bytes = base64::prelude::BASE64_URL_SAFE_NO_PAD
+                .decode(&ops.signatures[0])
+                .unwrap();
             assert_eq!(sig_bytes.len(), 64, "ed25519 signature should be 64 bytes");
             let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
             verifying_key
@@ -605,7 +601,13 @@ mod tests {
             }
         }
 
-        assert!(found_space_a, "should find aggregated data for space A (3 ops, 300 bytes)");
-        assert!(found_space_b, "should find aggregated data for space B (2 ops, 500 bytes)");
+        assert!(
+            found_space_a,
+            "should find aggregated data for space A (3 ops, 300 bytes)"
+        );
+        assert!(
+            found_space_b,
+            "should find aggregated data for space B (2 ops, 500 bytes)"
+        );
     }
 }

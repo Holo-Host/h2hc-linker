@@ -1,7 +1,7 @@
 [package]
-name = "hc-membrane"
+name = "h2hc-linker"
 version = "0.1.0"
-description = "Holochain Membrane - Network edge gateway providing DHT access for lightweight clients"
+description = "Holo-to-Holochain Linker - Network edge gateway providing DHT access for lightweight clients"
 authors = ["Holochain Community"]
 license = "CAL-1.0"
 edition = "2021"

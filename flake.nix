@@ -1,5 +1,5 @@
 {
-  description = "Flake for Holochain Membrane Gateway";
+  description = "Flake for h2hc-linker";
 
   inputs = {
     holonix.url = "github:holochain/holonix?ref=main-0.6";
@@ -42,7 +42,7 @@
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
 
             shellHook = ''
-              export PS1='\[\033[1;35m\][hc-membrane:\w]\$\[\033[0m\] '
+              export PS1='\[\033[1;35m\][h2hc-linker:\w]\$\[\033[0m\] '
             '';
           };
           ci = pkgs.mkShell {

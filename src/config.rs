@@ -144,11 +144,10 @@ impl Configuration {
                         .ok()
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(5);
-                    let fetched_op_interval_s: u32 =
-                        std::env::var("H2HC_LINKER_REPORT_INTERVAL_S")
-                            .ok()
-                            .and_then(|v| v.parse().ok())
-                            .unwrap_or(60);
+                    let fetched_op_interval_s: u32 = std::env::var("H2HC_LINKER_REPORT_INTERVAL_S")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(60);
                     config.report = ReportConfig::JsonLines {
                         days_retained,
                         fetched_op_interval_s,

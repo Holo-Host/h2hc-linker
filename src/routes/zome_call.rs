@@ -2,7 +2,7 @@
 //!
 //! Provides HTTP access to zome functions via the conductor.
 
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use crate::service::AppState;
 use axum::extract::{Path, Query, State};
 use base64::{prelude::BASE64_URL_SAFE, Engine};
@@ -58,10 +58,10 @@ pub async fn zome_call(
     Path(path): Path<ZomeCallPath>,
     State(state): State<AppState>,
     Query(query): Query<ZomeCallQuery>,
-) -> HcMembraneResult<String> {
+) -> LinkerResult<String> {
     // Parse DNA hash
     let dna_hash = DnaHash::try_from(path.dna_hash.clone())
-        .map_err(|_| HcMembraneError::RequestMalformed("Invalid DNA hash".to_string()))?;
+        .map_err(|_| LinkerError::RequestMalformed("Invalid DNA hash".to_string()))?;
 
     info!(
         dna = %dna_hash,
@@ -75,7 +75,7 @@ pub async fn zome_call(
     let app_conn = state
         .app_conn
         .as_ref()
-        .ok_or_else(|| HcMembraneError::UpstreamUnavailable)?;
+        .ok_or_else(|| LinkerError::UpstreamUnavailable)?;
 
     // Transcode payload from base64 encoded JSON to ExternIO
     let payload = base64_json_to_extern_io(query.payload)?;
@@ -91,26 +91,26 @@ pub async fn zome_call(
 
 /// Transcode an optional base64 encoded JSON payload to ExternIO.
 /// If no payload is passed, a unit value (null) is serialized.
-fn base64_json_to_extern_io(maybe_payload: Option<String>) -> HcMembraneResult<ExternIO> {
+fn base64_json_to_extern_io(maybe_payload: Option<String>) -> LinkerResult<ExternIO> {
     let json_value = if let Some(base64_encoded) = maybe_payload {
-        let decoded = BASE64_URL_SAFE.decode(base64_encoded).map_err(|_| {
-            HcMembraneError::RequestMalformed("Invalid base64 encoding".to_string())
-        })?;
+        let decoded = BASE64_URL_SAFE
+            .decode(base64_encoded)
+            .map_err(|_| LinkerError::RequestMalformed("Invalid base64 encoding".to_string()))?;
         serde_json::from_slice::<serde_json::Value>(&decoded)
-            .map_err(|_| HcMembraneError::RequestMalformed("Invalid JSON value".to_string()))?
+            .map_err(|_| LinkerError::RequestMalformed("Invalid JSON value".to_string()))?
     } else {
         serde_json::Value::Null
     };
 
     ExternIO::encode(json_value)
-        .map_err(|e| HcMembraneError::RequestMalformed(format!("Failed to serialize payload: {e}")))
+        .map_err(|e| LinkerError::RequestMalformed(format!("Failed to serialize payload: {e}")))
 }
 
 /// Transcode an ExternIO response to a JSON string.
-fn extern_io_to_json(response: &ExternIO) -> HcMembraneResult<String> {
+fn extern_io_to_json(response: &ExternIO) -> LinkerResult<String> {
     let json_value = response
         .decode::<serde_json::Value>()
-        .map_err(|e| HcMembraneError::Internal(format!("Failed to decode response: {e}")))?;
+        .map_err(|e| LinkerError::Internal(format!("Failed to decode response: {e}")))?;
     Ok(json_value.to_string())
 }
 
@@ -139,14 +139,14 @@ mod tests {
     #[test]
     fn test_base64_json_to_extern_io_invalid_base64() {
         let result = base64_json_to_extern_io(Some("not valid base64!!!".to_string()));
-        assert!(matches!(result, Err(HcMembraneError::RequestMalformed(_))));
+        assert!(matches!(result, Err(LinkerError::RequestMalformed(_))));
     }
 
     #[test]
     fn test_base64_json_to_extern_io_invalid_json() {
         let encoded = BASE64_URL_SAFE.encode("not json");
         let result = base64_json_to_extern_io(Some(encoded));
-        assert!(matches!(result, Err(HcMembraneError::RequestMalformed(_))));
+        assert!(matches!(result, Err(LinkerError::RequestMalformed(_))));
     }
 
     #[test]

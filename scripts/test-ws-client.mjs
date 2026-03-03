@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * WebSocket client for testing hc-membrane DHT queries.
+ * WebSocket client for testing h2hc-linker DHT queries.
  *
  * Connects to the gateway WebSocket, authenticates, and registers a fake agent
  * so the gateway joins the kitsune2 space and discovers conductor peers.

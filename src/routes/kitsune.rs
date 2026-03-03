@@ -19,13 +19,13 @@ use kitsune2_api::{AgentId, AgentInfo, ApiTransportStats, DhtArc, DynKitsune, Sp
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 
 /// Parse a base64-encoded space ID from a URL path parameter
-fn parse_space_id(space_id_str: &str) -> HcMembraneResult<SpaceId> {
+fn parse_space_id(space_id_str: &str) -> LinkerResult<SpaceId> {
     let bytes = BASE64_URL_SAFE_NO_PAD
         .decode(space_id_str)
-        .map_err(|e| HcMembraneError::InvalidRequest(format!("Invalid space ID: {e}")))?;
+        .map_err(|e| LinkerError::InvalidRequest(format!("Invalid space ID: {e}")))?;
     Ok(SpaceId::from(bytes::Bytes::from(bytes)))
 }
 
@@ -160,7 +160,7 @@ pub fn kitsune_routes() -> Router<Arc<KitsuneState>> {
 /// GET /k2/status - Get overall network status
 async fn get_network_status(
     State(state): State<Arc<KitsuneState>>,
-) -> HcMembraneResult<Json<NetworkStatus>> {
+) -> LinkerResult<Json<NetworkStatus>> {
     let (total_peers, active_spaces, full_arc_peers, blocked_peers) =
         if let Some(kitsune) = &state.kitsune {
             let spaces = kitsune.list_spaces();
@@ -220,7 +220,7 @@ async fn get_network_status(
 /// GET /k2/peers - Get all known peers across all spaces
 async fn get_all_peers(
     State(state): State<Arc<KitsuneState>>,
-) -> HcMembraneResult<Json<Vec<PeerInfoResponse>>> {
+) -> LinkerResult<Json<Vec<PeerInfoResponse>>> {
     let Some(kitsune) = &state.kitsune else {
         return Ok(Json(vec![]));
     };
@@ -244,7 +244,7 @@ async fn get_all_peers(
 async fn get_space_status(
     State(state): State<Arc<KitsuneState>>,
     Path(space_id_str): Path<String>,
-) -> HcMembraneResult<Json<SpaceStatusResponse>> {
+) -> LinkerResult<Json<SpaceStatusResponse>> {
     let space_id = parse_space_id(&space_id_str)?;
 
     let Some(kitsune) = &state.kitsune else {
@@ -256,7 +256,7 @@ async fn get_space_status(
     };
 
     let Some(space) = kitsune.space_if_exists(space_id).await else {
-        return Err(HcMembraneError::NotFound(format!(
+        return Err(LinkerError::NotFound(format!(
             "Space not found: {space_id_str}"
         )));
     };
@@ -286,7 +286,7 @@ async fn get_space_status(
 async fn get_space_peers(
     State(state): State<Arc<KitsuneState>>,
     Path(space_id_str): Path<String>,
-) -> HcMembraneResult<Json<Vec<PeerInfoResponse>>> {
+) -> LinkerResult<Json<Vec<PeerInfoResponse>>> {
     let space_id = parse_space_id(&space_id_str)?;
 
     let Some(kitsune) = &state.kitsune else {
@@ -294,7 +294,7 @@ async fn get_space_peers(
     };
 
     let Some(space) = kitsune.space_if_exists(space_id).await else {
-        return Err(HcMembraneError::NotFound(format!(
+        return Err(LinkerError::NotFound(format!(
             "Space not found: {space_id_str}"
         )));
     };
@@ -303,7 +303,7 @@ async fn get_space_peers(
         .peer_store()
         .get_all()
         .await
-        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+        .map_err(|e| LinkerError::Internal(e.to_string()))?;
 
     let responses: Vec<PeerInfoResponse> = peers
         .iter()
@@ -317,7 +317,7 @@ async fn get_space_peers(
 async fn get_local_agents(
     State(state): State<Arc<KitsuneState>>,
     Path(space_id_str): Path<String>,
-) -> HcMembraneResult<Json<Vec<AgentId>>> {
+) -> LinkerResult<Json<Vec<AgentId>>> {
     let space_id = parse_space_id(&space_id_str)?;
 
     let Some(kitsune) = &state.kitsune else {
@@ -325,7 +325,7 @@ async fn get_local_agents(
     };
 
     let Some(space) = kitsune.space_if_exists(space_id).await else {
-        return Err(HcMembraneError::NotFound(format!(
+        return Err(LinkerError::NotFound(format!(
             "Space not found: {space_id_str}"
         )));
     };
@@ -334,7 +334,7 @@ async fn get_local_agents(
         .local_agent_store()
         .get_all()
         .await
-        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+        .map_err(|e| LinkerError::Internal(e.to_string()))?;
 
     let agent_ids: Vec<AgentId> = agents.iter().map(|a| a.agent().clone()).collect();
 
@@ -345,7 +345,7 @@ async fn get_local_agents(
 /// Returns the kitsune2_api::ApiTransportStats directly
 async fn get_transport_stats(
     State(state): State<Arc<KitsuneState>>,
-) -> HcMembraneResult<Json<ApiTransportStats>> {
+) -> LinkerResult<Json<ApiTransportStats>> {
     let Some(kitsune) = &state.kitsune else {
         // Return empty stats if Kitsune not connected
         return Ok(Json(ApiTransportStats {
@@ -361,12 +361,12 @@ async fn get_transport_stats(
     let transport = kitsune
         .transport()
         .await
-        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+        .map_err(|e| LinkerError::Internal(e.to_string()))?;
 
     let stats = transport
         .dump_network_stats()
         .await
-        .map_err(|e| HcMembraneError::Internal(e.to_string()))?;
+        .map_err(|e| LinkerError::Internal(e.to_string()))?;
 
     Ok(Json(stats))
 }

@@ -1,7 +1,7 @@
 //! App websocket connection for zome calls.
 
 use crate::conductor::AdminConn;
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use holochain_client::{
     AppInfo, AppWebsocket, CellId, ClientAgentSigner, ConnectRequest, ExternIO, GrantedFunctions,
     IssueAppAuthenticationTokenPayload, WebsocketConfig, ZomeCallTarget,
@@ -51,7 +51,7 @@ impl AppConn {
         dna_hash: &DnaHash,
         fn_name: &str,
         payload: ExternIO,
-    ) -> HcMembraneResult<ExternIO> {
+    ) -> LinkerResult<ExternIO> {
         self.call_zome(dna_hash, "dht_util", fn_name, payload).await
     }
 
@@ -62,7 +62,7 @@ impl AppConn {
         zome_name: &str,
         fn_name: &str,
         payload: ExternIO,
-    ) -> HcMembraneResult<ExternIO> {
+    ) -> LinkerResult<ExternIO> {
         // Find an app with this DNA
         let (app_info, cell_id) = self.find_app_with_dna(dna_hash).await?;
 
@@ -78,13 +78,13 @@ impl AppConn {
                 payload,
             )
             .await
-            .map_err(HcMembraneError::HolochainError)?;
+            .map_err(LinkerError::HolochainError)?;
 
         Ok(result)
     }
 
     /// Find an app that contains the specified DNA.
-    async fn find_app_with_dna(&self, dna_hash: &DnaHash) -> HcMembraneResult<(AppInfo, CellId)> {
+    async fn find_app_with_dna(&self, dna_hash: &DnaHash) -> LinkerResult<(AppInfo, CellId)> {
         // Check cache first
         {
             let cache = self.app_info_cache.read().await;
@@ -107,7 +107,7 @@ impl AppConn {
 
         // Search again
         self.find_in_apps(&apps, dna_hash)
-            .ok_or_else(|| HcMembraneError::NotFound(format!("No app found with DNA {dna_hash}")))
+            .ok_or_else(|| LinkerError::NotFound(format!("No app found with DNA {dna_hash}")))
     }
 
     fn find_in_apps(&self, apps: &[AppInfo], dna_hash: &DnaHash) -> Option<(AppInfo, CellId)> {
@@ -125,7 +125,7 @@ impl AppConn {
         None
     }
 
-    async fn get_or_connect(&self, installed_app_id: &str) -> HcMembraneResult<AppWebsocket> {
+    async fn get_or_connect(&self, installed_app_id: &str) -> LinkerResult<AppWebsocket> {
         // Check cache
         {
             let conns = self.connections.read().await;
@@ -147,7 +147,7 @@ impl AppConn {
         Ok(ws)
     }
 
-    async fn connect_app(&self, installed_app_id: &str) -> HcMembraneResult<AppWebsocket> {
+    async fn connect_app(&self, installed_app_id: &str) -> LinkerResult<AppWebsocket> {
         // Get admin connection to issue token
         let admin_ws = self.admin_conn.get_websocket().await?;
 
@@ -157,7 +157,7 @@ impl AppConn {
                 installed_app_id.to_string(),
             ))
             .await
-            .map_err(HcMembraneError::HolochainError)?;
+            .map_err(LinkerError::HolochainError)?;
 
         // Get app port (or attach new interface)
         let app_port = self.get_app_port(&admin_ws, installed_app_id).await?;
@@ -183,7 +183,7 @@ impl AppConn {
         .await
         .map_err(|e| {
             tracing::error!(?e, "Failed to connect app websocket");
-            HcMembraneError::UpstreamUnavailable
+            LinkerError::UpstreamUnavailable
         })?;
 
         // Authorize signing for all cells
@@ -199,7 +199,7 @@ impl AppConn {
                             },
                         )
                         .await
-                        .map_err(HcMembraneError::HolochainError)?;
+                        .map_err(LinkerError::HolochainError)?;
                     signer.add_credentials(p.cell_id.clone(), creds);
                 }
             }
@@ -213,12 +213,12 @@ impl AppConn {
         &self,
         admin_ws: &holochain_client::AdminWebsocket,
         _installed_app_id: &str,
-    ) -> HcMembraneResult<u16> {
+    ) -> LinkerResult<u16> {
         // List existing interfaces
         let interfaces = admin_ws
             .list_app_interfaces()
             .await
-            .map_err(HcMembraneError::HolochainError)?;
+            .map_err(LinkerError::HolochainError)?;
 
         // Find one that allows our origin
         for iface in &interfaces {
@@ -236,7 +236,7 @@ impl AppConn {
                 None,
             )
             .await
-            .map_err(HcMembraneError::HolochainError)?;
+            .map_err(LinkerError::HolochainError)?;
 
         tracing::info!("Attached new app interface on port {}", port);
         Ok(port)

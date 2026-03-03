@@ -9,7 +9,7 @@ use crate::auth::AuthStore;
 use crate::conductor::{AdminConn, AppConn};
 use crate::config::Configuration;
 use crate::dht_query::{DhtQuery, PendingDhtResponses};
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use crate::gateway_kitsune::{GatewayKitsune, KitsuneProxy, KitsuneProxyBuilder};
 use crate::router::create_router;
 use crate::routes::kitsune::KitsuneState;
@@ -37,14 +37,14 @@ pub struct AppState {
 }
 
 /// The main h2hc-linker service
-pub struct HcMembraneService {
+pub struct LinkerService {
     addr: SocketAddr,
     app_state: AppState,
 }
 
-impl HcMembraneService {
+impl LinkerService {
     /// Create a new service with the given configuration
-    pub async fn new(address: IpAddr, port: u16, config: Configuration) -> HcMembraneResult<Self> {
+    pub async fn new(address: IpAddr, port: u16, config: Configuration) -> LinkerResult<Self> {
         let addr = SocketAddr::new(address, port);
 
         // Create agent proxy manager
@@ -112,7 +112,7 @@ impl HcMembraneService {
                 }
                 Err(e) => {
                     tracing::error!("Failed to create Kitsune2 instance: {}", e);
-                    return Err(HcMembraneError::Internal(format!(
+                    return Err(LinkerError::Internal(format!(
                         "Failed to create Kitsune2 instance: {e}"
                     )));
                 }
@@ -168,18 +168,18 @@ impl HcMembraneService {
     }
 
     /// Run the service
-    pub async fn run(self) -> HcMembraneResult<()> {
+    pub async fn run(self) -> LinkerResult<()> {
         let router = create_router(self.app_state);
 
         tracing::info!("Starting h2hc-linker on {}", self.addr);
 
         let listener = TcpListener::bind(self.addr)
             .await
-            .map_err(|e| crate::error::HcMembraneError::Network(e.to_string()))?;
+            .map_err(|e| crate::error::LinkerError::Network(e.to_string()))?;
 
         axum::serve(listener, router)
             .await
-            .map_err(|e| crate::error::HcMembraneError::Network(e.to_string()))?;
+            .map_err(|e| crate::error::LinkerError::Network(e.to_string()))?;
 
         Ok(())
     }

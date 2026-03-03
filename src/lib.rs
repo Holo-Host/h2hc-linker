@@ -35,9 +35,9 @@ pub(crate) mod wire_preflight;
 pub mod routes;
 
 pub use config::Configuration;
-pub use error::{HcMembraneError, HcMembraneResult};
+pub use error::{LinkerError, LinkerResult};
 pub use router::create_router;
-pub use service::HcMembraneService;
+pub use service::LinkerService;
 
 // Re-export common types
 pub use holo_hash;

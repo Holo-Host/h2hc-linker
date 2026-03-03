@@ -1,6 +1,6 @@
 //! Admin websocket connection with auto-reconnection.
 
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use holochain_client::{AdminWebsocket, AppInfo, ConductorApiError};
 use holochain_conductor_api::AppStatusFilter;
 use std::net::SocketAddr;
@@ -27,7 +27,7 @@ impl AdminConn {
     pub async fn list_apps(
         &self,
         status_filter: Option<AppStatusFilter>,
-    ) -> HcMembraneResult<Vec<AppInfo>> {
+    ) -> LinkerResult<Vec<AppInfo>> {
         for _ in 0..2 {
             let admin_ws = self.get_or_connect().await?;
 
@@ -38,19 +38,19 @@ impl AdminConn {
                     *self.handle.write().await = None;
                     continue;
                 }
-                Err(e) => return Err(HcMembraneError::HolochainError(e)),
+                Err(e) => return Err(LinkerError::HolochainError(e)),
             }
         }
 
-        Err(HcMembraneError::UpstreamUnavailable)
+        Err(LinkerError::UpstreamUnavailable)
     }
 
     /// Get the current websocket connection (connecting if needed).
-    pub async fn get_websocket(&self) -> HcMembraneResult<AdminWebsocket> {
+    pub async fn get_websocket(&self) -> LinkerResult<AdminWebsocket> {
         self.get_or_connect().await
     }
 
-    async fn get_or_connect(&self) -> HcMembraneResult<AdminWebsocket> {
+    async fn get_or_connect(&self) -> LinkerResult<AdminWebsocket> {
         {
             let lock = self.handle.read().await;
             if let Some(ws) = lock.as_ref() {
@@ -73,7 +73,7 @@ impl AdminConn {
             }
             Err(e) => {
                 tracing::error!(?e, "Failed to connect to conductor admin");
-                Err(HcMembraneError::UpstreamUnavailable)
+                Err(LinkerError::UpstreamUnavailable)
             }
         }
     }

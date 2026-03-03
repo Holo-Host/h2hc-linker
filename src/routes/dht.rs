@@ -9,7 +9,7 @@ use holochain_types::prelude::{
 };
 use serde::Deserialize;
 
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use crate::service::AppState;
 
 // For direct DHT queries
@@ -32,24 +32,24 @@ use holochain_zome_types::validate::ValidationStatus;
 // Hash parsing helpers
 // ============================================================================
 
-fn parse_dna_hash(s: &str) -> HcMembraneResult<holochain_types::dna::DnaHash> {
+fn parse_dna_hash(s: &str) -> LinkerResult<holochain_types::dna::DnaHash> {
     holochain_types::dna::DnaHash::try_from(s)
-        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid DNA hash: {s}")))
+        .map_err(|_| LinkerError::RequestMalformed(format!("Invalid DNA hash: {s}")))
 }
 
-fn parse_any_dht_hash(s: &str) -> HcMembraneResult<AnyDhtHash> {
+fn parse_any_dht_hash(s: &str) -> LinkerResult<AnyDhtHash> {
     if let Ok(hash) = EntryHash::try_from(s) {
         return Ok(AnyDhtHash::from(hash));
     }
     if let Ok(hash) = ActionHash::try_from(s) {
         return Ok(AnyDhtHash::from(hash));
     }
-    Err(HcMembraneError::RequestMalformed(format!(
+    Err(LinkerError::RequestMalformed(format!(
         "Invalid DHT hash: {s}"
     )))
 }
 
-fn parse_any_linkable_hash(s: &str) -> HcMembraneResult<AnyLinkableHash> {
+fn parse_any_linkable_hash(s: &str) -> LinkerResult<AnyLinkableHash> {
     if let Ok(hash) = AgentPubKey::try_from(s) {
         return Ok(AnyLinkableHash::from(hash));
     }
@@ -62,7 +62,7 @@ fn parse_any_linkable_hash(s: &str) -> HcMembraneResult<AnyLinkableHash> {
     if let Ok(hash) = ExternalHash::try_from(s) {
         return Ok(AnyLinkableHash::from(hash));
     }
-    Err(HcMembraneError::RequestMalformed(format!(
+    Err(LinkerError::RequestMalformed(format!(
         "Invalid linkable hash: {s}"
     )))
 }
@@ -105,11 +105,11 @@ pub struct LinksQuery {
 pub async fn dht_get_record(
     Path(path): Path<RecordPath>,
     State(state): State<AppState>,
-) -> HcMembraneResult<Json<serde_json::Value>> {
+) -> LinkerResult<Json<serde_json::Value>> {
     let dht_query = state
         .dht_query
         .as_ref()
-        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+        .ok_or_else(|| LinkerError::Internal("DHT queries not available".to_string()))?;
 
     let dna_hash = parse_dna_hash(&path.dna_hash)?;
     let hash = parse_any_dht_hash(&path.hash)?;
@@ -134,11 +134,11 @@ pub async fn dht_get_record(
 pub async fn dht_get_details(
     Path(path): Path<RecordPath>,
     State(state): State<AppState>,
-) -> HcMembraneResult<Json<serde_json::Value>> {
+) -> LinkerResult<Json<serde_json::Value>> {
     let dht_query = state
         .dht_query
         .as_ref()
-        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+        .ok_or_else(|| LinkerError::Internal("DHT queries not available".to_string()))?;
 
     let dna_hash = parse_dna_hash(&path.dna_hash)?;
     let hash = parse_any_dht_hash(&path.hash)?;
@@ -163,18 +163,18 @@ pub async fn dht_get_links(
     Path(path): Path<LinksPath>,
     Query(query): Query<LinksQuery>,
     State(state): State<AppState>,
-) -> HcMembraneResult<Json<serde_json::Value>> {
+) -> LinkerResult<Json<serde_json::Value>> {
     let dht_query = state
         .dht_query
         .as_ref()
-        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+        .ok_or_else(|| LinkerError::Internal("DHT queries not available".to_string()))?;
 
     let dna_hash = parse_dna_hash(&path.dna_hash)?;
     let base = parse_any_linkable_hash(&query.base)?;
 
     let tag = if let Some(tag_str) = query.tag {
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &tag_str)
-            .map_err(|_| HcMembraneError::RequestMalformed("Invalid tag encoding".to_string()))?;
+            .map_err(|_| LinkerError::RequestMalformed("Invalid tag encoding".to_string()))?;
         Some(LinkTag::new(bytes))
     } else {
         None
@@ -196,7 +196,7 @@ pub async fn dht_get_links(
         }
         (None, Some(_)) => {
             // link_type without zome_index - can't filter properly
-            return Err(HcMembraneError::RequestMalformed(
+            return Err(LinkerError::RequestMalformed(
                 "zome_index is required when filtering by link type".to_string(),
             ));
         }
@@ -249,18 +249,18 @@ pub async fn dht_count_links(
     Path(path): Path<LinksPath>,
     Query(query): Query<LinksQuery>,
     State(state): State<AppState>,
-) -> HcMembraneResult<Json<serde_json::Value>> {
+) -> LinkerResult<Json<serde_json::Value>> {
     let dht_query = state
         .dht_query
         .as_ref()
-        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+        .ok_or_else(|| LinkerError::Internal("DHT queries not available".to_string()))?;
 
     let dna_hash = parse_dna_hash(&path.dna_hash)?;
     let base = parse_any_linkable_hash(&query.base)?;
 
     let tag_prefix = if let Some(tag_str) = query.tag {
         let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &tag_str)
-            .map_err(|_| HcMembraneError::RequestMalformed("Invalid tag encoding".to_string()))?;
+            .map_err(|_| LinkerError::RequestMalformed("Invalid tag encoding".to_string()))?;
         Some(LinkTag::new(bytes))
     } else {
         None
@@ -272,7 +272,7 @@ pub async fn dht_count_links(
         }
         (Some(zome_idx), None) => LinkTypeFilter::single_dep(zome_idx.into()),
         (None, Some(_)) => {
-            return Err(HcMembraneError::RequestMalformed(
+            return Err(LinkerError::RequestMalformed(
                 "zome_index is required when filtering by link type".to_string(),
             ));
         }
@@ -326,14 +326,14 @@ pub struct MustGetAgentActivityBody {
     pub include_cached_entries: bool,
 }
 
-fn parse_agent_pubkey(s: &str) -> HcMembraneResult<AgentPubKey> {
+fn parse_agent_pubkey(s: &str) -> LinkerResult<AgentPubKey> {
     AgentPubKey::try_from(s)
-        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid agent pubkey: {s}")))
+        .map_err(|_| LinkerError::RequestMalformed(format!("Invalid agent pubkey: {s}")))
 }
 
-fn parse_action_hash(s: &str) -> HcMembraneResult<ActionHash> {
+fn parse_action_hash(s: &str) -> LinkerResult<ActionHash> {
     ActionHash::try_from(s)
-        .map_err(|_| HcMembraneError::RequestMalformed(format!("Invalid action hash: {s}")))
+        .map_err(|_| LinkerError::RequestMalformed(format!("Invalid action hash: {s}")))
 }
 
 /// GET /dht/{dna_hash}/agent_activity/{agent_hash}
@@ -345,11 +345,11 @@ pub async fn dht_get_agent_activity(
     Path(path): Path<AgentActivityPath>,
     Query(query): Query<AgentActivityQuery>,
     State(state): State<AppState>,
-) -> HcMembraneResult<Json<serde_json::Value>> {
+) -> LinkerResult<Json<serde_json::Value>> {
     let dht_query = state
         .dht_query
         .as_ref()
-        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+        .ok_or_else(|| LinkerError::Internal("DHT queries not available".to_string()))?;
 
     let dna_hash = parse_dna_hash(&path.dna_hash)?;
     let agent = parse_agent_pubkey(&path.agent_hash)?;
@@ -386,11 +386,11 @@ pub async fn dht_must_get_agent_activity(
     Path(path): Path<LinksPath>,
     State(state): State<AppState>,
     Json(body): Json<MustGetAgentActivityBody>,
-) -> HcMembraneResult<Json<serde_json::Value>> {
+) -> LinkerResult<Json<serde_json::Value>> {
     let dht_query = state
         .dht_query
         .as_ref()
-        .ok_or_else(|| HcMembraneError::Internal("DHT queries not available".to_string()))?;
+        .ok_or_else(|| LinkerError::Internal("DHT queries not available".to_string()))?;
 
     let dna_hash = parse_dna_hash(&path.dna_hash)?;
     let agent = parse_agent_pubkey(&body.agent)?;

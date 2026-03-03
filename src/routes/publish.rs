@@ -3,7 +3,7 @@
 //! Allows zero-arc browser agents to publish their source chain data
 //! to the DHT via the gateway.
 
-use crate::error::{HcMembraneError, HcMembraneResult};
+use crate::error::{LinkerError, LinkerResult};
 use crate::service::AppState;
 use axum::extract::{Path, State};
 use axum::Json;
@@ -107,10 +107,10 @@ pub async fn dht_publish(
     Path(path): Path<PublishPath>,
     State(state): State<AppState>,
     Json(body): Json<PublishRequest>,
-) -> HcMembraneResult<Json<PublishResponse>> {
+) -> LinkerResult<Json<PublishResponse>> {
     // Parse DNA hash
     let dna_hash = DnaHash::try_from(path.dna_hash.clone())
-        .map_err(|_| HcMembraneError::RequestMalformed("Invalid DNA hash".to_string()))?;
+        .map_err(|_| LinkerError::RequestMalformed("Invalid DNA hash".to_string()))?;
 
     info!(
         dna = %dna_hash,
@@ -238,22 +238,22 @@ async fn process_signed_op(
     dna_hash: &DnaHash,
     signed_op: &SignedDhtOp,
     state: &AppState,
-) -> Result<ProcessedOp, HcMembraneError> {
+) -> Result<ProcessedOp, LinkerError> {
     use base64::Engine;
 
     // Decode op data from base64
     let op_bytes = base64::engine::general_purpose::STANDARD
         .decode(&signed_op.op_data)
-        .map_err(|e| HcMembraneError::RequestMalformed(format!("Invalid op_data base64: {e}")))?;
+        .map_err(|e| LinkerError::RequestMalformed(format!("Invalid op_data base64: {e}")))?;
 
     // Decode signature from base64
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&signed_op.signature)
-        .map_err(|e| HcMembraneError::RequestMalformed(format!("Invalid signature base64: {e}")))?;
+        .map_err(|e| LinkerError::RequestMalformed(format!("Invalid signature base64: {e}")))?;
 
     // Validate signature length
     if sig_bytes.len() != 64 {
-        return Err(HcMembraneError::RequestMalformed(format!(
+        return Err(LinkerError::RequestMalformed(format!(
             "Invalid signature length: expected 64 bytes, got {}",
             sig_bytes.len()
         )));
@@ -263,13 +263,13 @@ async fn process_signed_op(
     let extern_io = ExternIO::from(op_bytes.clone());
     let op: DhtOp = extern_io
         .decode()
-        .map_err(|e| HcMembraneError::RequestMalformed(format!("Failed to decode DhtOp: {e}")))?;
+        .map_err(|e| LinkerError::RequestMalformed(format!("Failed to decode DhtOp: {e}")))?;
 
     // Get the chain op (browser extensions only produce ChainOps, not WarrantOps)
     let chain_op = match &op {
         DhtOp::ChainOp(op) => op,
         DhtOp::WarrantOp(_) => {
-            return Err(HcMembraneError::RequestMalformed(
+            return Err(LinkerError::RequestMalformed(
                 "WarrantOps are not supported for browser extension publishing".to_string(),
             ));
         }
@@ -297,15 +297,13 @@ async fn process_signed_op(
 
     // Store the op in TempOpStore if available
     let temp_op_store = state.temp_op_store.as_ref().ok_or_else(|| {
-        HcMembraneError::Internal(
-            "TempOpStore not configured - publishing not available".to_string(),
-        )
+        LinkerError::Internal("TempOpStore not configured - publishing not available".to_string())
     })?;
 
     let op_id = temp_op_store
         .store_op(Bytes::from(op_bytes))
         .await
-        .map_err(|e| HcMembraneError::Internal(format!("Failed to store op: {e}")))?;
+        .map_err(|e| LinkerError::Internal(format!("Failed to store op: {e}")))?;
 
     debug!(
         dna = %dna_hash,

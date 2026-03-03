@@ -6,11 +6,11 @@ use holochain_client::ConductorApiError;
 use serde::Serialize;
 
 /// Result type for h2hc-linker operations
-pub type HcMembraneResult<T> = Result<T, HcMembraneError>;
+pub type LinkerResult<T> = Result<T, LinkerError>;
 
 /// Error type for h2hc-linker operations
 #[derive(Debug, thiserror::Error)]
-pub enum HcMembraneError {
+pub enum LinkerError {
     /// Configuration error
     #[error("Configuration error: {0}")]
     Config(String),
@@ -63,25 +63,25 @@ pub struct ErrorResponse {
     pub code: u16,
 }
 
-impl IntoResponse for HcMembraneError {
+impl IntoResponse for LinkerError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
-            HcMembraneError::Config(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            HcMembraneError::Network(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
-            HcMembraneError::Serialization(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            HcMembraneError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            HcMembraneError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            HcMembraneError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
-            HcMembraneError::HolochainError(e) => {
+            LinkerError::Config(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            LinkerError::Network(msg) => (StatusCode::BAD_GATEWAY, msg.clone()),
+            LinkerError::Serialization(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            LinkerError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            LinkerError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            LinkerError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            LinkerError::HolochainError(e) => {
                 (StatusCode::BAD_GATEWAY, format!("Holochain error: {e}"))
             }
-            HcMembraneError::UpstreamUnavailable => (
+            LinkerError::UpstreamUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Upstream unavailable".to_string(),
             ),
-            HcMembraneError::AuthenticationFailed(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
-            HcMembraneError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
-            HcMembraneError::RequestMalformed(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            LinkerError::AuthenticationFailed(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            LinkerError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
+            LinkerError::RequestMalformed(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         };
 
         let body = serde_json::to_string(&ErrorResponse {
