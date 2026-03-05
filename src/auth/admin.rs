@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use holo_hash::AgentPubKeyB64;
 use holochain_types::prelude::AgentPubKey;
 use serde::{Deserialize, Serialize};
 
@@ -13,9 +14,12 @@ use super::types::{AllowedAgent, Capability};
 use crate::service::AppState;
 
 /// Request body for adding/updating an allowed agent.
+///
+/// `agent_pubkey` is a HoloHash base64 string (e.g. "uhCAk..."), matching
+/// the format used by the WebSocket protocol and the joining service.
 #[derive(Debug, Deserialize)]
 pub struct AddAgentRequest {
-    pub agent_pubkey: AgentPubKey,
+    pub agent_pubkey: String,
     pub capabilities: Vec<Capability>,
     #[serde(default)]
     pub label: Option<String>,
@@ -24,7 +28,7 @@ pub struct AddAgentRequest {
 /// Request body for removing an agent.
 #[derive(Debug, Deserialize)]
 pub struct RemoveAgentRequest {
-    pub agent_pubkey: AgentPubKey,
+    pub agent_pubkey: String,
 }
 
 /// Response for listing agents.
@@ -34,9 +38,11 @@ pub struct AgentListResponse {
 }
 
 /// Agent info in list response.
+///
+/// `agent_pubkey` is serialized as a HoloHash base64 string.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentResponse {
-    pub agent_pubkey: AgentPubKey,
+    pub agent_pubkey: AgentPubKeyB64,
     pub capabilities: Vec<Capability>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -51,8 +57,19 @@ pub async fn add_agent(
         return (StatusCode::INTERNAL_SERVER_ERROR, "Auth not configured").into_response();
     };
 
+    let agent_pubkey = match AgentPubKey::try_from(body.agent_pubkey.as_str()) {
+        Ok(k) => k,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid agent_pubkey: {e:?}"),
+            )
+                .into_response();
+        }
+    };
+
     let agent = AllowedAgent {
-        agent_pubkey: body.agent_pubkey,
+        agent_pubkey,
         capabilities: body.capabilities.into_iter().collect(),
         label: body.label,
     };
@@ -70,7 +87,18 @@ pub async fn remove_agent(
         return (StatusCode::INTERNAL_SERVER_ERROR, "Auth not configured").into_response();
     };
 
-    let removed = auth_store.remove_agent(&body.agent_pubkey).await;
+    let agent_pubkey = match AgentPubKey::try_from(body.agent_pubkey.as_str()) {
+        Ok(k) => k,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid agent_pubkey: {e:?}"),
+            )
+                .into_response();
+        }
+    };
+
+    let removed = auth_store.remove_agent(&agent_pubkey).await;
     if removed {
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -89,7 +117,7 @@ pub async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
         agents: agents
             .into_iter()
             .map(|a| AgentResponse {
-                agent_pubkey: a.agent_pubkey,
+                agent_pubkey: a.agent_pubkey.into(),
                 capabilities: a.capabilities.into_iter().collect(),
                 label: a.label,
             })
@@ -157,11 +185,12 @@ mod tests {
     async fn test_add_agent_request_deserialization() {
         let agent = AgentPubKey::from_raw_32(vec![42u8; 32]);
         let json = serde_json::json!({
-            "agent_pubkey": agent,
+            "agent_pubkey": agent.to_string(),
             "capabilities": ["dht_read", "k2"],
             "label": "Test Agent"
         });
         let req: AddAgentRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.agent_pubkey, agent.to_string());
         assert_eq!(req.capabilities.len(), 2);
         assert_eq!(req.label, Some("Test Agent".to_string()));
     }
@@ -172,10 +201,9 @@ mod tests {
         let state = test_app_state(store);
         let app = build_admin_router(state);
 
-        // Add an agent
         let agent_pubkey = AgentPubKey::from_raw_32(vec![1u8; 32]);
         let body = serde_json::json!({
-            "agent_pubkey": agent_pubkey,
+            "agent_pubkey": agent_pubkey.to_string(),
             "capabilities": ["dht_read", "dht_write"],
             "label": "My Agent"
         });
@@ -196,7 +224,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-        // List agents
+        // List agents - response should contain base64 strings
         let resp = app
             .oneshot(
                 HttpRequest::builder()
@@ -210,9 +238,12 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let list: AgentListResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(list.agents.len(), 1);
-        assert_eq!(list.agents[0].label, Some("My Agent".to_string()));
+        // Use raw JSON to avoid hc_serde_json HoloHash string deserialization issues
+        let raw_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(raw_json["agents"].as_array().unwrap().len(), 1);
+        assert_eq!(raw_json["agents"][0]["label"], "My Agent");
+        // Verify the response contains a base64 string, not a byte array
+        assert!(raw_json["agents"][0]["agent_pubkey"].is_string());
     }
 
     #[tokio::test]
@@ -231,7 +262,7 @@ mod tests {
         let state = test_app_state(store);
         let app = build_admin_router(state);
 
-        let body = serde_json::json!({ "agent_pubkey": agent_pubkey });
+        let body = serde_json::json!({ "agent_pubkey": agent_pubkey.to_string() });
 
         let resp = app
             .clone()
@@ -262,8 +293,8 @@ mod tests {
             .unwrap();
 
         let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let list: AgentListResponse = serde_json::from_slice(&body).unwrap();
-        assert_eq!(list.agents.len(), 0);
+        let raw_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(raw_json["agents"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -272,7 +303,7 @@ mod tests {
         let state = test_app_state(store);
         let app = build_admin_router(state);
 
-        let body = serde_json::json!({ "agent_pubkey": AgentPubKey::from_raw_32(vec![99u8; 32]) });
+        let body = serde_json::json!({ "agent_pubkey": AgentPubKey::from_raw_32(vec![99u8; 32]).to_string() });
 
         let resp = app
             .oneshot(

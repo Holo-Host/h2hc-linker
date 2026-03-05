@@ -581,6 +581,7 @@ async fn handle_auth(
 
     // Check if agent is in the allowed list
     if !auth_store.is_agent_allowed(&agent).await {
+        tracing::warn!("WS auth rejected: agent {} not in allowlist", agent);
         return Some(ServerMessage::AuthError {
             message: "Agent not allowed".to_string(),
         });
@@ -650,7 +651,8 @@ async fn handle_auth_challenge_response(
 
     // Verify the signature
     use ed25519_dalek::Verifier;
-    if verifying_key.verify(&challenge, &signature).is_err() {
+    if let Err(e) = verifying_key.verify(&challenge, &signature) {
+        tracing::warn!("Auth signature verification failed for agent {}: {e}", agent);
         return Some(ServerMessage::AuthError {
             message: "Signature verification failed".to_string(),
         });
@@ -659,6 +661,7 @@ async fn handle_auth_challenge_response(
     // Auth succeeded - create session
     let auth_store = app_state.auth_store.as_ref().unwrap();
     let Some(session_token) = auth_store.create_session(&agent).await else {
+        tracing::warn!("Failed to create session for agent {}", agent);
         return Some(ServerMessage::AuthError {
             message: "Failed to create session".to_string(),
         });
@@ -668,7 +671,9 @@ async fn handle_auth_challenge_response(
     auth_store.register_ws_sender(&agent, sender.clone()).await;
 
     state.authenticated = true;
-    state.authenticated_agent = Some(agent);
+    state.authenticated_agent = Some(agent.clone());
+
+    tracing::info!("Auth OK for agent {}, session token issued", agent);
 
     Some(ServerMessage::AuthOk {
         session_token: session_token.as_str().to_string(),
