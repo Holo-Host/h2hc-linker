@@ -279,7 +279,7 @@ Publish signed DhtOps to the DHT network.
 
 ## Zome Call Endpoint
 
-Unlike `/dht/*` endpoints which query the network directly via kitsune2 wire protocol, zome calls are proxied through a Holochain conductor. The linker connects to the conductor's admin WebSocket (configured via `H2HC_LINKER_ADMIN_WS_URL`) and forwards the call. Without a conductor running, this endpoint returns `503`.
+Unlike `/dht/*` endpoints which query the network directly via kitsune2 wire protocol, zome calls are proxied through a Holochain conductor (configured via `H2HC_LINKER_CONDUCTOR_URL`). Without a conductor running, this endpoint returns `503`.
 
 ### `GET /api/{dna_hash}/{zome_name}/{fn_name}`
 
@@ -661,7 +661,7 @@ Inject a test signal (development only, no auth).
 |----------|----------|-------------|
 | `H2HC_LINKER_BOOTSTRAP_URL` | yes | Kitsune2 bootstrap server URL |
 | `H2HC_LINKER_RELAY_URL` | no | Iroh relay server URL |
-| `H2HC_LINKER_ADMIN_WS_URL` | no | Conductor admin WebSocket address (for zome calls) |
+| `H2HC_LINKER_CONDUCTOR_URL` | no | Conductor address for zome call proxying |
 | `H2HC_LINKER_ADMIN_SECRET` | no | Enables auth layer when set |
 | `H2HC_LINKER_SESSION_TTL_SECS` | no | Session token TTL in seconds (default: 3600) |
 | `H2HC_LINKER_PAYLOAD_LIMIT_BYTES` | no | Max request payload size (default: 10MB) |

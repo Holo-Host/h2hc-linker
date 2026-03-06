@@ -52,8 +52,8 @@ impl Default for WebSocketConfig {
 /// Configuration for the Holochain Membrane gateway
 #[derive(Debug, Clone)]
 pub struct Configuration {
-    /// Address of the Holochain admin WebSocket (for conductor integration during migration)
-    pub admin_socket_addr: Option<SocketAddr>,
+    /// Conductor address for zome call proxying
+    pub conductor_url: Option<SocketAddr>,
 
     /// Bootstrap server URL for Kitsune2 (required)
     pub bootstrap_url: String,
@@ -87,7 +87,7 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            admin_socket_addr: None,
+            conductor_url: None,
             bootstrap_url: String::new(),
             relay_url: None,
             payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
@@ -106,9 +106,9 @@ impl Configuration {
     pub fn from_env() -> anyhow::Result<Self> {
         let mut config = Self::default();
 
-        // Optional admin WebSocket for migration period
-        if let Ok(url) = std::env::var("H2HC_LINKER_ADMIN_WS_URL") {
-            config.admin_socket_addr = Some(url.parse()?);
+        // Conductor address for zome call proxying
+        if let Ok(url) = std::env::var("H2HC_LINKER_CONDUCTOR_URL") {
+            config.conductor_url = Some(url.parse()?);
         }
 
         // Kitsune2 configuration (bootstrap URL is required)
@@ -184,7 +184,7 @@ impl Configuration {
 
     /// Check if conductor integration is configured
     pub fn conductor_enabled(&self) -> bool {
-        self.admin_socket_addr.is_some()
+        self.conductor_url.is_some()
     }
 
     /// Check if authentication is enabled (admin secret is set)

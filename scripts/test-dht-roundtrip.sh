@@ -219,7 +219,7 @@ log_info "DNA hash: $DNA_HASH"
 
 # 4. Start h2hc-linker gateway
 log_info "Starting h2hc-linker gateway..."
-H2HC_LINKER_ADMIN_WS_URL="127.0.0.1:$ADMIN_PORT_1" \
+H2HC_LINKER_CONDUCTOR_URL="127.0.0.1:$ADMIN_PORT_1" \
 H2HC_LINKER_BOOTSTRAP_URL="$BOOTSTRAP_URL" \
 H2HC_LINKER_RELAY_URL="$BOOTSTRAP_URL" \
 RUST_LOG="info,h2hc_linker=trace,kitsune2=debug" \

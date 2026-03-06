@@ -6,33 +6,9 @@ Network edge gateway providing DHT access for lightweight browser clients.
 
 h2hc-linker is designed to serve zero-arc Holochain nodes that don't participate in gossip. Instead, these lightweight clients (like browser extensions) fetch and publish data through the gateway.
 
-## API Design
+## API
 
-### Serialization
-
-- **HTTP API**: JSON for all request/response wrappers
-- **Binary data**: Msgpack-encoded, base64-wrapped within JSON fields (e.g., DhtOp in publish requests)
-
-This matches the pattern established in hc-http-gw for browser compatibility while preserving Holochain's binary data formats.
-
-### Endpoints
-
-#### Kitsune Direct API (`/k2/*`)
-
-Low-level network introspection for debugging and liveness UIs:
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /k2/status` | Network connection status |
-| `GET /k2/peers` | All known peers across spaces |
-| `GET /k2/space/{id}/status` | Status for a specific DNA space |
-| `GET /k2/space/{id}/peers` | Peers for a specific space |
-| `GET /k2/space/{id}/local-agents` | Local agents in a space |
-| `GET /k2/transport/stats` | Transport layer statistics |
-
-#### Holochain Semantic API (`/hc/*`)
-
-*Coming in M2* - Higher-level API matching Holochain concepts (cells, zome calls, etc.).
+See [API.md](./API.md) for full endpoint documentation.
 
 ## Building
 
@@ -61,8 +37,9 @@ Environment variables:
 |----------|-------------|---------|
 | `H2HC_LINKER_ADDRESS` | Bind address | `127.0.0.1` |
 | `H2HC_LINKER_PORT` | Bind port | `8090` |
-| `BOOTSTRAP_URL` | Kitsune bootstrap server | None |
-| `SIGNAL_URL` | Kitsune signal server | None |
+| `H2HC_LINKER_BOOTSTRAP_URL` | Kitsune bootstrap server | (required) |
+| `H2HC_LINKER_RELAY_URL` | Iroh relay server | None |
+| `H2HC_LINKER_CONDUCTOR_URL` | Conductor address for zome call proxying | None |
 
 ## Releasing
 

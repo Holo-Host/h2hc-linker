@@ -129,16 +129,16 @@ impl LinkerService {
         });
 
         // Create conductor connection if configured
-        let app_conn = if let Some(admin_addr) = config.admin_socket_addr {
-            tracing::info!("Initializing conductor connection to {}", admin_addr);
-            let admin_conn = AdminConn::new(admin_addr);
+        let app_conn = if let Some(conductor_addr) = config.conductor_url {
+            tracing::info!("Initializing conductor connection to {}", conductor_addr);
+            let admin_conn = AdminConn::new(conductor_addr);
             Some(AppConn::new(
                 admin_conn,
-                admin_addr,
+                conductor_addr,
                 config.zome_call_timeout,
             ))
         } else {
-            tracing::info!("Conductor not configured (no admin WebSocket URL)");
+            tracing::info!("Conductor not configured (no H2HC_LINKER_CONDUCTOR_URL)");
             None
         };
 
