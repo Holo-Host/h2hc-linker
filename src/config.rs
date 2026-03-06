@@ -156,8 +156,7 @@ impl Configuration {
                 "none" | "" => {}
                 other => {
                     return Err(anyhow::anyhow!(
-                        "Unknown H2HC_LINKER_REPORT value: '{}'. Use 'json_lines' or 'none'.",
-                        other
+                        "Unknown H2HC_LINKER_REPORT value: '{other}'. Use 'json_lines' or 'none'."
                     ));
                 }
             }

@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn test_linker_report_factory_creates() {
         let factory = LinkerReportFactory::create();
-        assert!(format!("{:?}", factory).contains("LinkerReportFactory"));
+        assert!(format!("{factory:?}").contains("LinkerReportFactory"));
     }
 
     #[tokio::test]
