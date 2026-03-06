@@ -189,7 +189,7 @@ Instead, it's a **network edge gateway** that links lightweight clients (browser
 
 ## Why Not holochain_p2p as Semantic Layer?
 
-The [original architecture analysis](./STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md) (sections 5, 8, 9) recommended using `holochain_p2p`'s `HolochainP2pDna` trait as the semantic layer for DHT queries. During M4 implementation, the gateway instead implemented direct wire protocol queries via a custom `DhtQuery` module. Here's why:
+The original architecture analysis recommended using `holochain_p2p`'s `HolochainP2pDna` trait as the semantic layer for DHT queries. During implementation, the gateway instead implemented direct wire protocol queries via a custom `DhtQuery` module. Here's why:
 
 ### What was planned
 
@@ -483,6 +483,4 @@ Previously unimplemented endpoints that have since been added:
 
 ## Related Documentation
 
-- [STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md](./STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md) - Original architecture analysis (pre-implementation). See the divergence note above for what changed.
-- [../holo-web-conductor/ARCHITECTURE.md](../holo-web-conductor/ARCHITECTURE.md) - Full browser extension architecture (client side)
-- [../holo-web-conductor/LESSONS_LEARNED.md](../holo-web-conductor/LESSONS_LEARNED.md) - Serialization debugging lessons
+- [holo-web-conductor](https://github.com/Holo-Host/holo-web-conductor) - Full browser extension architecture (client side)

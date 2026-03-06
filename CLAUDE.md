@@ -31,8 +31,6 @@
 1. **Kitsune2 patterns**: `../holochain/crates/holochain_p2p/src/` - Holochain's kitsune2 integration
 2. **Holochain types**: `../holochain/crates/holochain_types/src/`
 3. **Hash types**: `../holochain/crates/holo_hash/src/`
-4. **Gateway patterns**: `../hc-http-gw-fork/` - Original HTTP gateway (being superseded)
-5. **Serialization lessons**: `../holo-web-conductor/LESSONS_LEARNED.md` - msgpack/serialization pitfalls
 
 **Avoid web searches** for implementation details - local repos have authoritative code.
 
@@ -107,7 +105,6 @@ cargo build && cargo test
 
 - Use `holochain_serialized_bytes` for msgpack serialization
 - Hash types are 39 bytes (32 core + 3 type prefix + 4 location)
-- See `../holo-web-conductor/LESSONS_LEARNED.md` for detailed debugging strategies
 
 ### Commit Hygiene
 
@@ -123,58 +120,29 @@ cargo build && cargo test
 
 ## Testing and Integration
 
-### Test Infrastructure
+### Unit Tests
 
-Testing is done via the **holo-web-conductor** browser extension and **ziptest** hApp:
-
-- **Test scripts**: `../holo-web-conductor/scripts/e2e-test-setup.sh` - starts conductors and gateway
-- **Test app**: ziptest hApp at `../holo-web-conductor/fixtures/ziptest.happ`
-- **E2E test page**: `../holo-web-conductor/packages/extension/test/e2e-gateway-test.html`
-
-### Testing h2hc-linker Changes
-
-Testing requirements vary by step:
-
-**M1-M3 (before DHT endpoints)**:
 ```bash
-# Build and test unit tests (always use nix develop)
 nix develop --command cargo build --release
 nix develop --command cargo test
+```
 
-# Test liveness endpoints manually
+### Manual Smoke Test
+
+```bash
 nix develop --command cargo run -- --port 8090 &
 curl http://localhost:8090/health
 curl http://localhost:8090/k2/status
 ```
 
-**M2+ (with DHT endpoints)**: Full ziptest integration
-```bash
-# 1. Build h2hc-linker (always use nix develop)
-nix develop --command cargo build --release
+### E2E Testing
 
-# 2. Run e2e setup with h2hc-linker (requires --gateway=membrane flag, added in M2)
-cd ../holo-web-conductor && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
+Full integration testing uses the [holo-web-conductor](https://github.com/Holo-Host/holo-web-conductor) browser extension with the ziptest hApp. See that repo's e2e test setup scripts for details.
 
-# 3. Load holo-web-conductor extension in browser, test with ziptest UI
-
-# 4. Run integration tests
-cd ../holo-web-conductor && npm run test:integration
-```
-
-### e2e-test-setup.sh Adaptation
-
-As h2hc-linker development progresses, `../holo-web-conductor/scripts/e2e-test-setup.sh` should be adapted:
-
-1. **M2**: Add `--gateway=membrane` flag to switch between hc-http-gw-fork and h2hc-linker
-2. **M6**: Default to h2hc-linker, deprecate hc-http-gw-fork path
-3. **M7**: Remove hc-http-gw-fork support entirely
-
-### Test Checkpoints
-
-Each migration step should verify:
+Verify:
 - Gateway starts and responds to `/health`
 - Conductor connects successfully
-- ziptest basic operations work (create entry, get entry, get links)
+- Basic operations work (create entry, get entry, get links)
 - Remote signals work between browser and conductor
 
 ---
@@ -224,46 +192,6 @@ For implementing kitsune2 integration, study these in `../holochain/crates/holoc
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | This file - core rules and quick context |
-| `SESSION.md` | Current step focus and how to resume |
 | `ARCHITECTURE.md` | System architecture diagram |
-| `STEPS/index.md` | Step status registry |
-| `STEPS/X_PLAN.md` | Detailed plan for step X |
-| `STEPS/X_COMPLETION.md` | Completion notes for step X |
-| `STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md` | Detailed architecture analysis |
 
 ---
-
-## Workflow
-
-### Starting a New Step
-1. Create `STEPS/X_PLAN.md` with detailed sub-tasks
-2. Update `SESSION.md` to show current step
-3. Update `STEPS/index.md` status
-
-### Completing a Step
-1. Create `STEPS/X_COMPLETION.md` with summary, test results, issues fixed
-2. Update `SESSION.md` to next step
-3. Update `STEPS/index.md` status
-4. Commit: `docs: Step X complete`
-
-### How to Resume (SESSION Pattern)
-
-When starting work on a different computer or after a break:
-
-```bash
-# 1. Check current state
-cat SESSION.md
-cat STEPS/index.md
-
-# 2. Read the current step plan
-cat STEPS/<current>_PLAN.md
-
-# 3. Run tests to verify state
-cargo test
-```
-
-The `SESSION.md` file serves as the single source of truth for:
-- What step is currently in progress
-- What was just completed
-- What comes next
-- Quick links to relevant files

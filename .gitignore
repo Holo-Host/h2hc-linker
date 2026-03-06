@@ -16,3 +16,20 @@
 *.dna
 .claude
 .hc-sandbox
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
