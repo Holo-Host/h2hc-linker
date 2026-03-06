@@ -652,7 +652,10 @@ async fn handle_auth_challenge_response(
     // Verify the signature
     use ed25519_dalek::Verifier;
     if let Err(e) = verifying_key.verify(&challenge, &signature) {
-        tracing::warn!("Auth signature verification failed for agent {}: {e}", agent);
+        tracing::warn!(
+            "Auth signature verification failed for agent {}: {e}",
+            agent
+        );
         return Some(ServerMessage::AuthError {
             message: "Signature verification failed".to_string(),
         });
