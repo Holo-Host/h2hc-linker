@@ -32,7 +32,7 @@
 2. **Holochain types**: `../holochain/crates/holochain_types/src/`
 3. **Hash types**: `../holochain/crates/holo_hash/src/`
 4. **Gateway patterns**: `../hc-http-gw-fork/` - Original HTTP gateway (being superseded)
-5. **Serialization lessons**: `../fishy/LESSONS_LEARNED.md` - msgpack/serialization pitfalls
+5. **Serialization lessons**: `../holo-web-conductor/LESSONS_LEARNED.md` - msgpack/serialization pitfalls
 
 **Avoid web searches** for implementation details - local repos have authoritative code.
 
@@ -48,10 +48,13 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full diagram.
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │ DHT Endpoints (/dht/*)                                       │   │
-│  │  GET  /dht/{dna}/record/{hash}   → get record by hash        │   │
-│  │  GET  /dht/{dna}/details/{hash}  → record + updates/deletes  │   │
-│  │  GET  /dht/{dna}/links           → get_links(base, type)     │   │
-│  │  POST /dht/{dna}/publish         → publish signed DhtOps     │   │
+│  │  GET  /dht/{dna}/record/{hash}          → get record          │   │
+│  │  GET  /dht/{dna}/details/{hash}         → record + updates    │   │
+│  │  GET  /dht/{dna}/links                  → get_links           │   │
+│  │  GET  /dht/{dna}/count_links            → count_links         │   │
+│  │  GET  /dht/{dna}/agent_activity/{agent} → agent activity      │   │
+│  │  POST /dht/{dna}/must_get_agent_activity                      │   │
+│  │  POST /dht/{dna}/publish                → publish DhtOps      │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐   │
@@ -104,7 +107,7 @@ cargo build && cargo test
 
 - Use `holochain_serialized_bytes` for msgpack serialization
 - Hash types are 39 bytes (32 core + 3 type prefix + 4 location)
-- See `../fishy/LESSONS_LEARNED.md` for detailed debugging strategies
+- See `../holo-web-conductor/LESSONS_LEARNED.md` for detailed debugging strategies
 
 ### Commit Hygiene
 
@@ -122,11 +125,11 @@ cargo build && cargo test
 
 ### Test Infrastructure
 
-Testing is done via the **fishy** browser extension and **ziptest** hApp:
+Testing is done via the **holo-web-conductor** browser extension and **ziptest** hApp:
 
-- **Test scripts**: `../fishy/scripts/e2e-test-setup.sh` - starts conductors and gateway
-- **Test app**: ziptest hApp at `../fishy/fixtures/ziptest.happ`
-- **E2E test page**: `../fishy/packages/extension/test/e2e-gateway-test.html`
+- **Test scripts**: `../holo-web-conductor/scripts/e2e-test-setup.sh` - starts conductors and gateway
+- **Test app**: ziptest hApp at `../holo-web-conductor/fixtures/ziptest.happ`
+- **E2E test page**: `../holo-web-conductor/packages/extension/test/e2e-gateway-test.html`
 
 ### Testing h2hc-linker Changes
 
@@ -150,17 +153,17 @@ curl http://localhost:8090/k2/status
 nix develop --command cargo build --release
 
 # 2. Run e2e setup with h2hc-linker (requires --gateway=membrane flag, added in M2)
-cd ../fishy && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
+cd ../holo-web-conductor && ./scripts/e2e-test-setup.sh start --happ=ziptest --gateway=membrane
 
-# 3. Load fishy extension in browser, test with ziptest UI
+# 3. Load holo-web-conductor extension in browser, test with ziptest UI
 
-# 4. Run fishy integration tests
-cd ../fishy && npm run test:integration
+# 4. Run integration tests
+cd ../holo-web-conductor && npm run test:integration
 ```
 
 ### e2e-test-setup.sh Adaptation
 
-As h2hc-linker development progresses, `../fishy/scripts/e2e-test-setup.sh` should be adapted:
+As h2hc-linker development progresses, `../holo-web-conductor/scripts/e2e-test-setup.sh` should be adapted:
 
 1. **M2**: Add `--gateway=membrane` flag to switch between hc-http-gw-fork and h2hc-linker
 2. **M6**: Default to h2hc-linker, deprecate hc-http-gw-fork path

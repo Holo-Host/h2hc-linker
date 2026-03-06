@@ -1,8 +1,8 @@
-# hc-membrane Architecture
+# h2hc-linker Architecture
 
-> Holochain Membrane - Network edge gateway providing DHT access for lightweight clients
+> Holochain-to-Holochain Linker - Network edge gateway providing DHT access for lightweight clients
 >
-> Last updated: 2026-02-13 (reflects implementation as of M4.1)
+> Last updated: 2026-03-06 (reflects implementation as of M5.1)
 
 ---
 
@@ -13,7 +13,7 @@
 │                            CLIENTS                                   │
 │                                                                      │
 │   ┌─────────────────┐    ┌─────────────────┐    ┌────────────────┐  │
-│   │ Browser (Fishy) │    │  Mobile App     │    │   CLI Tool     │  │
+│   │ Browser (holo-web-conductor) │    │  Mobile App     │    │   CLI Tool     │  │
 │   │                 │    │                 │    │                │  │
 │   │ Sync XHR for    │    │ HTTP/WS for     │    │ HTTP for       │  │
 │   │ DHT queries     │    │ all operations  │    │ DHT queries    │  │
@@ -28,16 +28,19 @@
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          hc-membrane                                 │
+│                          h2hc-linker                                 │
 │                                                                      │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │ HTTP API Layer (axum)                                         │  │
 │  │                                                                │  │
 │  │ DHT Endpoints (/dht/*)                                        │  │
-│  │  GET  /dht/{dna}/record/{hash}   → get record by hash         │  │
-│  │  GET  /dht/{dna}/details/{hash}  → get record + updates/dels  │  │
-│  │  GET  /dht/{dna}/links           → get_links(base, type)      │  │
-│  │  POST /dht/{dna}/publish         → publish signed DhtOps      │  │
+│  │  GET  /dht/{dna}/record/{hash}          → get record by hash  │  │
+│  │  GET  /dht/{dna}/details/{hash}         → record + updates    │  │
+│  │  GET  /dht/{dna}/links                  → get_links           │  │
+│  │  GET  /dht/{dna}/count_links            → count_links         │  │
+│  │  GET  /dht/{dna}/agent_activity/{agent} → agent activity      │  │
+│  │  POST /dht/{dna}/must_get_agent_activity → filtered activity  │  │
+│  │  POST /dht/{dna}/publish                → publish DhtOps      │  │
 │  │                                                                │  │
 │  │ Zome Call Endpoint (/api/*)      [requires conductor]         │  │
 │  │  GET  /api/{dna}/{zome}/{fn}     → call zome function          │  │
@@ -56,6 +59,11 @@
 │  │  → register(dna, agent)              register for signals     │  │
 │  │  → sign_response(request_id, sig)    return signature         │  │
 │  │  → send_remote_signal(dna, signals)  relay signal to peers    │  │
+│  │                                                                │  │
+│  │ Admin API (/admin/*)   [requires H2HC_LINKER_ADMIN_SECRET]    │  │
+│  │  POST   /admin/agents            → add allowed agent           │  │
+│  │  DELETE /admin/agents            → remove agent                │  │
+│  │  GET    /admin/agents            → list allowed agents         │  │
 │  │                                                                │  │
 │  │ Test Endpoints                                                │  │
 │  │  POST /test/signal               → inject test signal          │  │
@@ -141,7 +149,7 @@
 │   │ Full Arc        │    │ Full Arc        │    │ Full Arc        │ │
 │   └─────────────────┘    └─────────────────┘    └─────────────────┘ │
 │                                                                      │
-│   (hc-membrane clients are zero-arc: store nothing, fetch all)      │
+│   (h2hc-linker clients are zero-arc: store nothing, fetch all)      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -149,14 +157,14 @@
 
 ## Why This Architecture?
 
-### The Holochain Membrane Concept
+### The Linker Concept
 
-**hc-membrane** is NOT "Holochain Lite" - it provides no:
+**h2hc-linker** is NOT "Holochain Lite" - it provides no:
 - Source chain (no local chain storage)
 - Validation (no validation workflows)
 - Full node capabilities (zero-arc, no DHT storage)
 
-Instead, it's a **network edge** - like a cell membrane, it provides selective access between lightweight clients and the Holochain DHT network.
+Instead, it's a **network edge gateway** that links lightweight clients (browsers, mobile) to the Holochain DHT network without requiring them to run a full conductor.
 
 ### Key Design Decisions
 
@@ -237,7 +245,7 @@ If `holochain_p2p` is ever refactored to separate wire protocol operations from 
 ### Get Record Flow
 
 ```
-Client                      hc-membrane                    DHT Authorities
+Client                      h2hc-linker                    DHT Authorities
   │                              │                              │
   │ GET /dht/{dna}/record/{hash} │                              │
   │─────────────────────────────►│                              │
@@ -262,7 +270,7 @@ Client                      hc-membrane                    DHT Authorities
 ### Publish Flow
 
 ```
-Client                      hc-membrane                    DHT Authorities
+Client                      h2hc-linker                    DHT Authorities
   │                              │                              │
   │ POST /dht/{dna}/publish      │                              │
   │ { ops: [{op_data, sig}] }   │                              │
@@ -286,7 +294,7 @@ Client                      hc-membrane                    DHT Authorities
 ### Signal Flow
 
 ```
-Holochain Conductor         hc-membrane                     Client
+Holochain Conductor         h2hc-linker                     Client
   │                              │                              │
   │ send_remote_signal()         │                              │
   │ via Kitsune2                 │                              │
@@ -306,7 +314,7 @@ Holochain Conductor         hc-membrane                     Client
 ### Remote Signing Flow
 
 ```
-Kitsune2 (needs sig)        hc-membrane                     Client
+Kitsune2 (needs sig)        h2hc-linker                     Client
   │                              │                              │
   │ ProxyAgent.sign(message)     │                              │
   │─────────────────────────────►│                              │
@@ -464,17 +472,17 @@ The following endpoints from the original architecture analysis are not yet impl
 | Endpoint | Status | Notes |
 |----------|--------|-------|
 | `GET /hc/{dna}/entry/{hash}` | Not implemented | Use `/dht/{dna}/record/{hash}` with entry hash |
-| `GET /hc/{dna}/links/count` | Not implemented | Not needed by fishy yet |
-| `GET /hc/{dna}/agent-activity` | Not implemented | Not needed by fishy yet |
 | `POST /hc/{dna}/signal` (HTTP) | Not implemented | Signals use WebSocket instead |
-| `POST /hc/{dna}/call-remote` | Not implemented | Not needed by fishy yet |
+| `POST /hc/{dna}/call-remote` | Not implemented | Not needed by holo-web-conductor yet |
 
-These may be added in future steps as client needs evolve.
+Previously unimplemented endpoints that have since been added:
+- `count_links` → `GET /dht/{dna}/count_links`
+- `agent-activity` → `GET /dht/{dna}/agent_activity/{agent}` and `POST /dht/{dna}/must_get_agent_activity`
 
 ---
 
 ## Related Documentation
 
 - [STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md](./STEPS/GATEWAY_ARCHITECTURE_ANALYSIS.md) - Original architecture analysis (pre-implementation). See the divergence note above for what changed.
-- [../fishy/ARCHITECTURE.md](../fishy/ARCHITECTURE.md) - Full browser extension architecture (client side)
-- [../fishy/LESSONS_LEARNED.md](../fishy/LESSONS_LEARNED.md) - Serialization debugging lessons
+- [../holo-web-conductor/ARCHITECTURE.md](../holo-web-conductor/ARCHITECTURE.md) - Full browser extension architecture (client side)
+- [../holo-web-conductor/LESSONS_LEARNED.md](../holo-web-conductor/LESSONS_LEARNED.md) - Serialization debugging lessons

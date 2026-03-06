@@ -1,44 +1,50 @@
 # Current Session
 
-**Last Updated**: 2026-02-17
-**Current Step**: All feature branches merged into main (docs-update, kitsune-dht-ops, step-m5-auth)
+**Last Updated**: 2026-03-06
+**Current Step**: M6 (Planned) — All prior steps complete through M5.1
 
 ---
 
-## Merged Work Summary
+## Completed Work Summary
 
-### M5 - Authentication Layer (from step-m5-auth)
+All features through M5.1 are merged into `main`. The project was renamed from **hc-membrane** to **h2hc-linker** (commit 30d6a9f).
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Auth types | Done | `Capability`, `AllowedAgent`, `SessionToken`, `SessionInfo`, `AuthContext` |
-| Auth store | Done | Thread-safe store with agent/session/WS management |
-| Config | Done | `admin_secret`, `session_ttl`, `auth_enabled()` |
-| Error types | Done | `Forbidden(String)` → 403 |
-| Service | Done | `auth_store: Option<AuthStore>` in AppState |
-| Middleware | Done | `require_dht_read`, `require_dht_write`, `require_k2`, `require_admin_secret` |
-| Admin API | Done | `POST/DELETE/GET /admin/agents` |
-| Router | Done | Conditional middleware (open vs authenticated) |
-| WS auth | Done | Challenge-response with ed25519 signature verification |
-| Unit tests | Done | 84 passing |
-| Validation Op fixtures | Done | JS-to-Rust cross-deserialization test vectors |
+### Implemented Features
 
-### Kitsune DHT Operations (from kitsune-dht-ops)
+| Area | Details |
+|------|---------|
+| **DHT Endpoints** | `GET /dht/{dna}/record/{hash}`, `GET /dht/{dna}/details/{hash}`, `GET /dht/{dna}/links`, `GET /dht/{dna}/count_links`, `POST /dht/{dna}/publish` |
+| **Agent Activity** | `GET /dht/{dna}/agent_activity/{agent}`, `POST /dht/{dna}/must_get_agent_activity` |
+| **Kitsune API** | `/k2/status`, `/k2/peers`, `/k2/space/{id}/status`, `/k2/space/{id}/peers`, `/k2/space/{id}/local-agents`, `/k2/transport/stats` |
+| **Zome Calls** | `GET /api/{dna}/{zome}/{fn}` (requires conductor) |
+| **WebSocket** | Agent registration, signal forwarding, remote signing, transparent signing protocol |
+| **Auth Layer** | Admin API (`/admin/agents`), session tokens, capabilities (`dht_read`, `dht_write`, `k2`), WS challenge-response |
+| **Kitsune2 Direct** | Wire protocol queries (DhtQuery), TempOpStore, PreflightCache, iroh/QUIC transport |
+| **Reporting** | JSONL usage reporting (`linker_report.rs`) |
+| **CI/CD** | GitHub Actions CI, cross-platform release workflow |
 
-1. **`get_details`** — kitsune variant of `/dht/{dna}/details/{hash}`
-   - Uses existing `DhtQuery::get()` (same GetReq/GetRes wire protocol as `get`)
-   - `wire_ops_to_details_json()` converts WireOps → Details format
-   - Handles both `WireRecordOps` → `Details::Record` and `WireEntryOps` → `Details::Entry`
-   - Unit tests for all conversion cases
+### Recent Commits (since last session update)
 
-2. **`count_links`** — new endpoint `/dht/{dna}/count_links`
-   - New wire protocol: `CountLinksReq`/`CountLinksRes`
-   - `DhtQuery::count_links()` method
-   - `CountLinksRes` routing in `recv_notify`
+- `9506270` fix: use base64 strings for agent_pubkey in admin API
+- `b2651f3` docs: added CAL License
+- `30d6a9f` refactor: rename hc-membrane to h2hc-linker throughout codebase
+- `6b4f223` feat: add kitsune2 usage reporting (hc-report JSONL)
+- `6b4c646` feat: transparent signing protocol for agent info
+- `d4e8e52` fix: convert WireOps to flat Record format in get endpoint
+- `9b6d8ac` feat: add get_agent_activity and must_get_agent_activity endpoints
 
-### Documentation (from docs-update)
+---
 
-- Architecture docs updated to match M4 implementation
+## Next Steps
+
+### M6: Migrate op construction to gateway
+- Add `produce_ops_from_record` in h2hc-linker
+- Update POST /dht/{dna}/publish to accept Record
+- holo-web-conductor extension sends Records instead of ops
+- Keep old ops endpoint for backwards compat
+
+### M7: Remove conductor dependency
+### M8: Deprecate hc-http-gw-fork
 
 ---
 
@@ -70,12 +76,14 @@ nix develop --command cargo run -- --port 8090
 | `src/routes/dht.rs` | HTTP endpoints, wire_ops conversion |
 | `src/router.rs` | Route registration (open + authenticated modes) |
 | `src/service.rs` | Service setup, DhtQuery + PendingDhtResponses wiring |
+| `src/linker_report.rs` | Kitsune2 JSONL usage reporting |
+| `src/wire_preflight.rs` | PreflightCache, BootstrapWrapperFactory |
 | `tests/validation_op_fixtures.rs` | JS-to-Rust validation Op cross-deserialization tests |
 
 ---
 
 ## Quick Links
 
-- [M5 Plan](./STEPS/M5_PLAN.md) - Auth layer plan
 - [Step Registry](./STEPS/index.md) - All step statuses
 - [Architecture](./ARCHITECTURE.md) - System architecture
+- [M5 Plan](./STEPS/M5_PLAN.md) - Auth layer plan
