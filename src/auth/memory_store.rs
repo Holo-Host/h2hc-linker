@@ -20,6 +20,12 @@ struct MemoryStoreInner {
     sessions: HashMap<String, SessionInfo>,
 }
 
+impl Default for MemorySessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemorySessionStore {
     pub fn new() -> Self {
         Self {

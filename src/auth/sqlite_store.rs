@@ -245,11 +245,9 @@ impl SessionStore for SqliteSessionStore {
             .expect("validate_session dna query failed");
 
         let mut registered_dnas = HashSet::new();
-        for dna_row in dna_rows {
-            if let Ok(dna_str) = dna_row {
-                if let Ok(dna) = DnaHash::try_from(dna_str.as_str()) {
-                    registered_dnas.insert(dna);
-                }
+        for dna_str in dna_rows.flatten() {
+            if let Ok(dna) = DnaHash::try_from(dna_str.as_str()) {
+                registered_dnas.insert(dna);
             }
         }
 
@@ -291,13 +289,11 @@ impl SessionStore for SqliteSessionStore {
         let pk = agent_pubkey.to_string();
 
         // CASCADE handles session_dnas
-        let rows = conn
-            .execute(
-                "DELETE FROM sessions WHERE agent_pubkey = ?1",
-                rusqlite::params![pk],
-            )
-            .expect("revoke_sessions_for_agent delete failed");
-        rows
+        conn.execute(
+            "DELETE FROM sessions WHERE agent_pubkey = ?1",
+            rusqlite::params![pk],
+        )
+        .expect("revoke_sessions_for_agent delete failed")
     }
 
     async fn session_count(&self) -> usize {

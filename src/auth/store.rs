@@ -23,6 +23,12 @@ pub struct AuthStore {
     ws_senders: Arc<RwLock<HashMap<AgentPubKey, Vec<WsSender>>>>,
 }
 
+impl Default for AuthStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthStore {
     /// Create with the default in-memory backend.
     pub fn new() -> Self {
