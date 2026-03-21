@@ -1,7 +1,9 @@
 //! Thread-safe authentication store.
 //!
-//! Manages allowed agents, sessions, and WS connection tracking.
+//! Wraps a [`SessionStore`] backend (memory or SQLite) and adds
+//! runtime-only WS connection tracking.
 
+use super::session_store::SessionStore;
 use super::types::*;
 use crate::agent_proxy::WsSender;
 use holochain_types::prelude::{AgentPubKey, DnaHash};
@@ -9,152 +11,114 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::memory_store::MemorySessionStore;
+
 /// The shared authentication store.
+///
+/// Delegates agent/session persistence to a [`SessionStore`] backend.
+/// WS sender tracking is always in-memory (runtime-only).
 #[derive(Debug, Clone)]
 pub struct AuthStore {
-    inner: Arc<RwLock<AuthStoreInner>>,
-}
-
-#[derive(Debug, Default)]
-struct AuthStoreInner {
-    allowed_agents: HashMap<AgentPubKey, AllowedAgent>,
-    sessions: HashMap<String, SessionInfo>,
-    ws_senders: HashMap<AgentPubKey, Vec<WsSender>>,
+    store: Arc<dyn SessionStore>,
+    ws_senders: Arc<RwLock<HashMap<AgentPubKey, Vec<WsSender>>>>,
 }
 
 impl AuthStore {
+    /// Create with the default in-memory backend.
     pub fn new() -> Self {
+        Self::with_store(Arc::new(MemorySessionStore::new()))
+    }
+
+    /// Create with a specific backend.
+    pub fn with_store(store: Arc<dyn SessionStore>) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(AuthStoreInner::default())),
+            store,
+            ws_senders: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    // --- Agent management ---
+    // --- Agent management (delegated) ---
 
     pub async fn add_agent(&self, agent: AllowedAgent) {
-        let mut inner = self.inner.write().await;
-        inner
-            .allowed_agents
-            .insert(agent.agent_pubkey.clone(), agent);
+        self.store.add_agent(agent).await;
     }
 
     /// Remove an agent. Revokes all sessions and closes all WS connections.
     pub async fn remove_agent(&self, agent_pubkey: &AgentPubKey) -> bool {
-        let mut inner = self.inner.write().await;
-        let removed = inner.allowed_agents.remove(agent_pubkey).is_some();
+        let removed = self.store.remove_agent(agent_pubkey).await;
         if removed {
-            // Revoke all sessions for this agent
-            inner
-                .sessions
-                .retain(|_, s| &s.agent_pubkey != agent_pubkey);
-            // Drop all WS senders for this agent (closes the connections)
-            inner.ws_senders.remove(agent_pubkey);
+            let mut ws = self.ws_senders.write().await;
+            ws.remove(agent_pubkey);
         }
         removed
     }
 
     pub async fn list_agents(&self) -> Vec<AllowedAgent> {
-        let inner = self.inner.read().await;
-        inner.allowed_agents.values().cloned().collect()
+        self.store.list_agents().await
     }
 
     pub async fn is_agent_allowed(&self, agent_pubkey: &AgentPubKey) -> bool {
-        let inner = self.inner.read().await;
-        inner.allowed_agents.contains_key(agent_pubkey)
+        self.store.is_agent_allowed(agent_pubkey).await
     }
 
     pub async fn get_agent(&self, agent_pubkey: &AgentPubKey) -> Option<AllowedAgent> {
-        let inner = self.inner.read().await;
-        inner.allowed_agents.get(agent_pubkey).cloned()
+        self.store.get_agent(agent_pubkey).await
     }
 
-    // --- Session management ---
+    // --- Session management (delegated) ---
 
     pub async fn create_session(&self, agent_pubkey: &AgentPubKey) -> Option<SessionToken> {
-        let inner = self.inner.read().await;
-        let allowed = inner.allowed_agents.get(agent_pubkey)?;
-        let capabilities = allowed.capabilities.clone();
-        drop(inner);
-
-        let token = SessionToken::generate();
-        let info = SessionInfo {
-            agent_pubkey: agent_pubkey.clone(),
-            capabilities,
-            registered_dnas: std::collections::HashSet::new(),
-        };
-
-        let mut inner = self.inner.write().await;
-        inner.sessions.insert(token.0.clone(), info);
-        Some(token)
+        self.store.create_session(agent_pubkey).await
     }
 
     pub async fn validate_session(&self, token: &str) -> Option<SessionInfo> {
-        let inner = self.inner.read().await;
-        inner.sessions.get(token).cloned()
+        self.store.validate_session(token).await
     }
 
     pub async fn revoke_session(&self, token: &str) -> bool {
-        let mut inner = self.inner.write().await;
-        inner.sessions.remove(token).is_some()
+        self.store.revoke_session(token).await
     }
 
     /// Register a DNA for all sessions belonging to an agent.
     /// Called when a client sends a Register message on the WebSocket.
     pub async fn register_dna_for_agent(&self, agent_pubkey: &AgentPubKey, dna: &DnaHash) {
-        let mut inner = self.inner.write().await;
-        for session in inner.sessions.values_mut() {
-            if &session.agent_pubkey == agent_pubkey {
-                session.registered_dnas.insert(dna.clone());
-            }
-        }
+        self.store.register_dna_for_agent(agent_pubkey, dna).await;
     }
 
     /// Revoke all sessions for an agent. Called on WebSocket disconnect.
     pub async fn revoke_sessions_for_agent(&self, agent_pubkey: &AgentPubKey) -> usize {
-        let mut inner = self.inner.write().await;
-        let before = inner.sessions.len();
-        inner
-            .sessions
-            .retain(|_, s| &s.agent_pubkey != agent_pubkey);
-        before - inner.sessions.len()
+        self.store.revoke_sessions_for_agent(agent_pubkey).await
     }
 
-    // --- WS connection tracking ---
+    /// Get total session count (for testing/monitoring).
+    pub async fn session_count(&self) -> usize {
+        self.store.session_count().await
+    }
+
+    // --- WS connection tracking (always in-memory) ---
 
     /// Register a WS sender for an agent (called on successful WS auth).
     pub async fn register_ws_sender(&self, agent_pubkey: &AgentPubKey, sender: WsSender) {
-        let mut inner = self.inner.write().await;
-        inner
-            .ws_senders
-            .entry(agent_pubkey.clone())
-            .or_default()
-            .push(sender);
+        let mut ws = self.ws_senders.write().await;
+        ws.entry(agent_pubkey.clone()).or_default().push(sender);
     }
 
     /// Unregister a WS sender for an agent (called on WS disconnect).
     /// Removes senders that are closed.
     pub async fn unregister_ws_sender(&self, agent_pubkey: &AgentPubKey, sender: &WsSender) {
-        let mut inner = self.inner.write().await;
-        if let Some(senders) = inner.ws_senders.get_mut(agent_pubkey) {
-            // Remove the specific sender by comparing channel identity
-            // mpsc::Sender has same_channel() for this
+        let mut ws = self.ws_senders.write().await;
+        if let Some(senders) = ws.get_mut(agent_pubkey) {
             senders.retain(|s| !s.same_channel(sender));
             if senders.is_empty() {
-                inner.ws_senders.remove(agent_pubkey);
+                ws.remove(agent_pubkey);
             }
         }
     }
 
     /// Get count of active WS connections for an agent.
     pub async fn ws_connection_count(&self, agent_pubkey: &AgentPubKey) -> usize {
-        let inner = self.inner.read().await;
-        inner.ws_senders.get(agent_pubkey).map_or(0, |v| v.len())
-    }
-
-    /// Get total session count (for testing/monitoring).
-    pub async fn session_count(&self) -> usize {
-        let inner = self.inner.read().await;
-        inner.sessions.len()
+        let ws = self.ws_senders.read().await;
+        ws.get(agent_pubkey).map_or(0, |v| v.len())
     }
 }
 
@@ -175,174 +139,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_add_and_list_agents() {
-        let store = AuthStore::new();
-        assert!(store.list_agents().await.is_empty());
-
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-        store
-            .add_agent(test_allowed_agent(
-                2,
-                &[Capability::DhtWrite, Capability::K2],
-            ))
-            .await;
-
-        let agents = store.list_agents().await;
-        assert_eq!(agents.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_is_agent_allowed() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-
-        assert!(store.is_agent_allowed(&test_agent(1)).await);
-        assert!(!store.is_agent_allowed(&test_agent(2)).await);
-    }
-
-    #[tokio::test]
-    async fn test_remove_agent() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-
-        assert!(store.remove_agent(&test_agent(1)).await);
-        assert!(!store.is_agent_allowed(&test_agent(1)).await);
-        // Removing again returns false
-        assert!(!store.remove_agent(&test_agent(1)).await);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_for_allowed_agent() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(
-                1,
-                &[Capability::DhtRead, Capability::K2],
-            ))
-            .await;
-
-        let token = store.create_session(&test_agent(1)).await;
-        assert!(token.is_some());
-
-        let token = token.unwrap();
-        let session = store.validate_session(token.as_str()).await;
-        assert!(session.is_some());
-
-        let session = session.unwrap();
-        assert_eq!(session.agent_pubkey, test_agent(1));
-        assert!(session.has_capability(Capability::DhtRead));
-        assert!(session.has_capability(Capability::K2));
-        assert!(!session.has_capability(Capability::DhtWrite));
-    }
-
-    #[tokio::test]
-    async fn test_create_session_for_unknown_agent_returns_none() {
-        let store = AuthStore::new();
-        let token = store.create_session(&test_agent(99)).await;
-        assert!(token.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_validate_invalid_token_returns_none() {
-        let store = AuthStore::new();
-        let session = store.validate_session("bogus-token").await;
-        assert!(session.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_revoke_session() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-
-        let token = store.create_session(&test_agent(1)).await.unwrap();
-        assert!(store.validate_session(token.as_str()).await.is_some());
-
-        assert!(store.revoke_session(token.as_str()).await);
-        assert!(store.validate_session(token.as_str()).await.is_none());
-
-        // Revoking again returns false
-        assert!(!store.revoke_session(token.as_str()).await);
-    }
-
-    #[tokio::test]
-    async fn test_remove_agent_revokes_all_sessions() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-
-        let token1 = store.create_session(&test_agent(1)).await.unwrap();
-        let token2 = store.create_session(&test_agent(1)).await.unwrap();
-
-        assert!(store.validate_session(token1.as_str()).await.is_some());
-        assert!(store.validate_session(token2.as_str()).await.is_some());
-
-        store.remove_agent(&test_agent(1)).await;
-
-        assert!(store.validate_session(token1.as_str()).await.is_none());
-        assert!(store.validate_session(token2.as_str()).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_register_dna_for_agent() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-
-        let token = store.create_session(&test_agent(1)).await.unwrap();
-
-        let dna1 = DnaHash::from_raw_32(vec![1u8; 32]);
-        let dna2 = DnaHash::from_raw_32(vec![2u8; 32]);
-
-        // Initially no DNAs registered
-        let session = store.validate_session(token.as_str()).await.unwrap();
-        assert!(!session.has_dna(&dna1));
-
-        // Register DNA
-        store.register_dna_for_agent(&test_agent(1), &dna1).await;
-        let session = store.validate_session(token.as_str()).await.unwrap();
-        assert!(session.has_dna(&dna1));
-        assert!(!session.has_dna(&dna2));
-
-        // Register second DNA
-        store.register_dna_for_agent(&test_agent(1), &dna2).await;
-        let session = store.validate_session(token.as_str()).await.unwrap();
-        assert!(session.has_dna(&dna1));
-        assert!(session.has_dna(&dna2));
-    }
-
-    #[tokio::test]
-    async fn test_revoke_sessions_for_agent() {
-        let store = AuthStore::new();
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-        store
-            .add_agent(test_allowed_agent(2, &[Capability::DhtRead]))
-            .await;
-
-        let token1 = store.create_session(&test_agent(1)).await.unwrap();
-        let token2 = store.create_session(&test_agent(1)).await.unwrap();
-        let token3 = store.create_session(&test_agent(2)).await.unwrap();
-        assert_eq!(store.session_count().await, 3);
-
-        let removed = store.revoke_sessions_for_agent(&test_agent(1)).await;
-        assert_eq!(removed, 2);
-        assert!(store.validate_session(token1.as_str()).await.is_none());
-        assert!(store.validate_session(token2.as_str()).await.is_none());
-        // Agent 2's session is untouched
-        assert!(store.validate_session(token3.as_str()).await.is_some());
-    }
+    // WS sender tests (AuthStore-specific, not part of shared suite)
 
     #[tokio::test]
     async fn test_ws_sender_register_and_unregister() {
@@ -363,16 +160,12 @@ mod tests {
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
 
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, _rx) = mpsc::channel(1);
         store.register_ws_sender(&test_agent(1), tx.clone()).await;
         assert_eq!(store.ws_connection_count(&test_agent(1)).await, 1);
 
         store.remove_agent(&test_agent(1)).await;
         assert_eq!(store.ws_connection_count(&test_agent(1)).await, 0);
-
-        // The sender was dropped, so trying to send should fail
-        // (well, tx is still alive since we cloned it above, but the store's copy is gone)
-        // What matters is the store no longer tracks it
     }
 
     #[tokio::test]

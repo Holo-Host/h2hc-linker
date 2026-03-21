@@ -145,8 +145,26 @@ impl LinkerService {
         // Create auth store if auth is enabled
         let auth_store = if config.auth_enabled() {
             tracing::info!("Authentication enabled (H2HC_LINKER_ADMIN_SECRET set)");
-            let store = AuthStore::new();
-            Some(store)
+            let session_store: std::sync::Arc<dyn crate::auth::session_store::SessionStore> =
+                match &config.session_store {
+                    crate::config::SessionStoreConfig::Memory => {
+                        tracing::info!("Using in-memory session store");
+                        std::sync::Arc::new(crate::auth::memory_store::MemorySessionStore::new())
+                    }
+                    crate::config::SessionStoreConfig::Sqlite { path } => {
+                        tracing::info!("Using SQLite session store at {}", path.display());
+                        std::sync::Arc::new(
+                            crate::auth::sqlite_store::SqliteSessionStore::new(path).map_err(
+                                |e| {
+                                    LinkerError::Internal(format!(
+                                        "Failed to open session store: {e}"
+                                    ))
+                                },
+                            )?,
+                        )
+                    }
+                };
+            Some(AuthStore::with_store(session_store))
         } else {
             tracing::info!("Authentication disabled (no H2HC_LINKER_ADMIN_SECRET)");
             None

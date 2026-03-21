@@ -309,7 +309,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         // Revoke all sessions for this agent — sessions die with the connection
         let revoked = auth_store.revoke_sessions_for_agent(agent).await;
         if revoked > 0 {
-            tracing::debug!("Revoked {} sessions for disconnected agent {}", revoked, agent);
+            tracing::debug!(
+                "Revoked {} sessions for disconnected agent {}",
+                revoked,
+                agent
+            );
         }
     }
 

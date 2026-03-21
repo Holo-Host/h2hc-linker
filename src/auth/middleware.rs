@@ -136,11 +136,7 @@ pub async fn require_dna_scope(
     };
 
     if !auth_ctx.has_dna(&dna_hash) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Session not authorized for this DNA",
-        )
-            .into_response();
+        return (StatusCode::FORBIDDEN, "Session not authorized for this DNA").into_response();
     }
 
     next.run(req).await

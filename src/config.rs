@@ -4,6 +4,16 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// How session/agent state is persisted.
+#[derive(Debug, Clone, Default)]
+pub enum SessionStoreConfig {
+    /// In-memory only (lost on restart). Default.
+    #[default]
+    Memory,
+    /// SQLite file at the given path.
+    Sqlite { path: PathBuf },
+}
+
 /// Configure Kitsune2 Reporting.
 ///
 /// Matches the conductor's `ReportConfig` enum so the log-collector
@@ -74,6 +84,9 @@ pub struct Configuration {
     /// When set, enables the auth layer.
     pub admin_secret: Option<String>,
 
+    /// Session store backend (from H2HC_LINKER_SESSION_STORE)
+    pub session_store: SessionStoreConfig,
+
     /// Kitsune2 report configuration (from H2HC_LINKER_REPORT)
     pub report: ReportConfig,
 
@@ -91,6 +104,7 @@ impl Default for Configuration {
             websocket: WebSocketConfig::default(),
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
             admin_secret: None,
+            session_store: SessionStoreConfig::default(),
             report: ReportConfig::None,
             report_path: PathBuf::from("/tmp/h2hc-linker-reports"),
         }
@@ -165,6 +179,26 @@ impl Configuration {
         if let Ok(secret) = std::env::var("H2HC_LINKER_ADMIN_SECRET") {
             config.admin_secret = Some(secret);
         }
+
+        // Session store backend
+        if let Ok(val) = std::env::var("H2HC_LINKER_SESSION_STORE") {
+            match val.as_str() {
+                "" | "memory" => {} // default
+                s if s.starts_with("sqlite://") => {
+                    let path = s.trim_start_matches("sqlite://");
+                    config.session_store = SessionStoreConfig::Sqlite {
+                        path: PathBuf::from(path),
+                    };
+                }
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "Unknown H2HC_LINKER_SESSION_STORE value: '{other}'. \
+                         Use 'memory' or 'sqlite:///path/to/sessions.db'."
+                    ));
+                }
+            }
+        }
+
         Ok(config)
     }
 
