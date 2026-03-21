@@ -74,9 +74,6 @@ pub struct Configuration {
     /// When set, enables the auth layer.
     pub admin_secret: Option<String>,
 
-    /// Session token TTL (from H2HC_LINKER_SESSION_TTL_SECS, default 3600)
-    pub session_ttl: Duration,
-
     /// Kitsune2 report configuration (from H2HC_LINKER_REPORT)
     pub report: ReportConfig,
 
@@ -94,7 +91,6 @@ impl Default for Configuration {
             websocket: WebSocketConfig::default(),
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
             admin_secret: None,
-            session_ttl: Duration::from_secs(3600),
             report: ReportConfig::None,
             report_path: PathBuf::from("/tmp/h2hc-linker-reports"),
         }
@@ -169,10 +165,6 @@ impl Configuration {
         if let Ok(secret) = std::env::var("H2HC_LINKER_ADMIN_SECRET") {
             config.admin_secret = Some(secret);
         }
-        if let Ok(ttl) = std::env::var("H2HC_LINKER_SESSION_TTL_SECS") {
-            config.session_ttl = Duration::from_secs(ttl.parse()?);
-        }
-
         Ok(config)
     }
 
@@ -202,7 +194,6 @@ mod tests {
         let config = Configuration::default();
         assert!(!config.auth_enabled());
         assert!(config.admin_secret.is_none());
-        assert_eq!(config.session_ttl, Duration::from_secs(3600));
     }
 
     #[test]
@@ -210,11 +201,5 @@ mod tests {
         let mut config = Configuration::default();
         config.admin_secret = Some("test-secret".to_string());
         assert!(config.auth_enabled());
-    }
-
-    #[test]
-    fn test_session_ttl_default() {
-        let config = Configuration::default();
-        assert_eq!(config.session_ttl, Duration::from_secs(3600));
     }
 }

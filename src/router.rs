@@ -8,7 +8,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::auth::admin::{add_agent, list_agents, remove_agent};
 use crate::auth::middleware::{
-    require_admin_secret, require_dht_read, require_dht_write, require_k2,
+    require_admin_secret, require_dht_read, require_dht_write, require_dna_scope, require_k2,
 };
 use crate::routes::{
     dht_count_links, dht_get_agent_activity, dht_get_details, dht_get_links, dht_get_record,
@@ -70,7 +70,7 @@ fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
 
 /// Router with auth middleware (when H2HC_LINKER_ADMIN_SECRET is set).
 fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
-    // DHT read routes
+    // DHT read routes (capability check, then DNA scope check)
     let dht_read_routes = Router::new()
         .route("/dht/{dna_hash}/record/{hash}", get(dht_get_record))
         .route("/dht/{dna_hash}/details/{hash}", get(dht_get_details))
@@ -86,12 +86,20 @@ fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
         )
         .route_layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
+            require_dna_scope,
+        ))
+        .route_layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
             require_dht_read,
         ));
 
-    // DHT write routes
+    // DHT write routes (capability check, then DNA scope check)
     let dht_write_routes = Router::new()
         .route("/dht/{dna_hash}/publish", post(dht_publish))
+        .route_layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            require_dna_scope,
+        ))
         .route_layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             require_dht_write,

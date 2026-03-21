@@ -145,8 +145,7 @@ impl LinkerService {
         // Create auth store if auth is enabled
         let auth_store = if config.auth_enabled() {
             tracing::info!("Authentication enabled (H2HC_LINKER_ADMIN_SECRET set)");
-            let store = AuthStore::new(config.session_ttl);
-            store.start_cleanup_task();
+            let store = AuthStore::new();
             Some(store)
         } else {
             tracing::info!("Authentication disabled (no H2HC_LINKER_ADMIN_SECRET)");

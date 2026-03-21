@@ -1,9 +1,8 @@
 //! Core authentication data types.
 
-use holochain_types::prelude::AgentPubKey;
+use holochain_types::prelude::{AgentPubKey, DnaHash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
 
 /// Capability levels for agent access control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,21 +43,24 @@ impl SessionToken {
 }
 
 /// Information about an active session.
+///
+/// Sessions live until the WebSocket disconnects or the agent is removed.
+/// No TTL — cleanup is connection-based.
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub agent_pubkey: AgentPubKey,
     pub capabilities: HashSet<Capability>,
-    pub created_at: Instant,
-    pub ttl: Duration,
+    /// DNAs this session is authorized to access (populated via Register messages).
+    pub registered_dnas: HashSet<DnaHash>,
 }
 
 impl SessionInfo {
-    pub fn is_expired(&self) -> bool {
-        self.created_at.elapsed() > self.ttl
-    }
-
     pub fn has_capability(&self, cap: Capability) -> bool {
         self.capabilities.contains(&cap)
+    }
+
+    pub fn has_dna(&self, dna: &DnaHash) -> bool {
+        self.registered_dnas.contains(dna)
     }
 }
 
@@ -67,6 +69,13 @@ impl SessionInfo {
 pub struct AuthContext {
     pub agent_pubkey: AgentPubKey,
     pub capabilities: HashSet<Capability>,
+    pub registered_dnas: HashSet<DnaHash>,
+}
+
+impl AuthContext {
+    pub fn has_dna(&self, dna: &DnaHash) -> bool {
+        self.registered_dnas.contains(dna)
+    }
 }
 
 #[cfg(test)]
@@ -121,37 +130,29 @@ mod tests {
     }
 
     #[test]
-    fn test_session_info_not_expired() {
-        let info = SessionInfo {
-            agent_pubkey: AgentPubKey::from_raw_32(vec![0u8; 32]),
-            capabilities: HashSet::from([Capability::DhtRead]),
-            created_at: Instant::now(),
-            ttl: Duration::from_secs(3600),
-        };
-        assert!(!info.is_expired());
-    }
-
-    #[test]
-    fn test_session_info_expired() {
-        let info = SessionInfo {
-            agent_pubkey: AgentPubKey::from_raw_32(vec![0u8; 32]),
-            capabilities: HashSet::from([Capability::DhtRead]),
-            created_at: Instant::now() - Duration::from_secs(7200),
-            ttl: Duration::from_secs(3600),
-        };
-        assert!(info.is_expired());
-    }
-
-    #[test]
     fn test_session_info_has_capability() {
         let info = SessionInfo {
             agent_pubkey: AgentPubKey::from_raw_32(vec![0u8; 32]),
             capabilities: HashSet::from([Capability::DhtRead, Capability::K2]),
-            created_at: Instant::now(),
-            ttl: Duration::from_secs(3600),
+            registered_dnas: HashSet::new(),
         };
         assert!(info.has_capability(Capability::DhtRead));
         assert!(info.has_capability(Capability::K2));
         assert!(!info.has_capability(Capability::DhtWrite));
+    }
+
+    #[test]
+    fn test_session_info_has_dna() {
+        let dna1 = DnaHash::from_raw_32(vec![1u8; 32]);
+        let dna2 = DnaHash::from_raw_32(vec![2u8; 32]);
+        let dna3 = DnaHash::from_raw_32(vec![3u8; 32]);
+        let info = SessionInfo {
+            agent_pubkey: AgentPubKey::from_raw_32(vec![0u8; 32]),
+            capabilities: HashSet::from([Capability::DhtRead]),
+            registered_dnas: HashSet::from([dna1.clone(), dna2.clone()]),
+        };
+        assert!(info.has_dna(&dna1));
+        assert!(info.has_dna(&dna2));
+        assert!(!info.has_dna(&dna3));
     }
 }

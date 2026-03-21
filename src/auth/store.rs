@@ -4,18 +4,15 @@
 
 use super::types::*;
 use crate::agent_proxy::WsSender;
-use holochain_types::prelude::AgentPubKey;
+use holochain_types::prelude::{AgentPubKey, DnaHash};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::debug;
 
 /// The shared authentication store.
 #[derive(Debug, Clone)]
 pub struct AuthStore {
     inner: Arc<RwLock<AuthStoreInner>>,
-    session_ttl: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -26,10 +23,9 @@ struct AuthStoreInner {
 }
 
 impl AuthStore {
-    pub fn new(session_ttl: Duration) -> Self {
+    pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(AuthStoreInner::default())),
-            session_ttl,
         }
     }
 
@@ -84,8 +80,7 @@ impl AuthStore {
         let info = SessionInfo {
             agent_pubkey: agent_pubkey.clone(),
             capabilities,
-            created_at: std::time::Instant::now(),
-            ttl: self.session_ttl,
+            registered_dnas: std::collections::HashSet::new(),
         };
 
         let mut inner = self.inner.write().await;
@@ -95,11 +90,7 @@ impl AuthStore {
 
     pub async fn validate_session(&self, token: &str) -> Option<SessionInfo> {
         let inner = self.inner.read().await;
-        let session = inner.sessions.get(token)?;
-        if session.is_expired() {
-            return None;
-        }
-        Some(session.clone())
+        inner.sessions.get(token).cloned()
     }
 
     pub async fn revoke_session(&self, token: &str) -> bool {
@@ -107,27 +98,25 @@ impl AuthStore {
         inner.sessions.remove(token).is_some()
     }
 
-    /// Remove expired sessions. Returns count removed.
-    pub async fn cleanup_expired_sessions(&self) -> usize {
+    /// Register a DNA for all sessions belonging to an agent.
+    /// Called when a client sends a Register message on the WebSocket.
+    pub async fn register_dna_for_agent(&self, agent_pubkey: &AgentPubKey, dna: &DnaHash) {
         let mut inner = self.inner.write().await;
-        let before = inner.sessions.len();
-        inner.sessions.retain(|_, s| !s.is_expired());
-        before - inner.sessions.len()
+        for session in inner.sessions.values_mut() {
+            if &session.agent_pubkey == agent_pubkey {
+                session.registered_dnas.insert(dna.clone());
+            }
+        }
     }
 
-    /// Start background cleanup task (every 60s).
-    pub fn start_cleanup_task(&self) {
-        let store = self.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-                let removed = store.cleanup_expired_sessions().await;
-                if removed > 0 {
-                    debug!("Cleaned up {} expired auth sessions", removed);
-                }
-            }
-        });
+    /// Revoke all sessions for an agent. Called on WebSocket disconnect.
+    pub async fn revoke_sessions_for_agent(&self, agent_pubkey: &AgentPubKey) -> usize {
+        let mut inner = self.inner.write().await;
+        let before = inner.sessions.len();
+        inner
+            .sessions
+            .retain(|_, s| &s.agent_pubkey != agent_pubkey);
+        before - inner.sessions.len()
     }
 
     // --- WS connection tracking ---
@@ -188,7 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_and_list_agents() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         assert!(store.list_agents().await.is_empty());
 
         store
@@ -207,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_agent_allowed() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
@@ -218,7 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_agent() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
@@ -231,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_for_allowed_agent() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(
                 1,
@@ -255,38 +244,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_session_for_unknown_agent_returns_none() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let token = store.create_session(&test_agent(99)).await;
         assert!(token.is_none());
     }
 
     #[tokio::test]
-    async fn test_validate_expired_session_returns_none() {
-        // Use a very short TTL
-        let store = AuthStore::new(Duration::from_millis(1));
-        store
-            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
-            .await;
-
-        let token = store.create_session(&test_agent(1)).await.unwrap();
-
-        // Wait for expiration
-        tokio::time::sleep(Duration::from_millis(10)).await;
-
-        let session = store.validate_session(token.as_str()).await;
-        assert!(session.is_none());
-    }
-
-    #[tokio::test]
     async fn test_validate_invalid_token_returns_none() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let session = store.validate_session("bogus-token").await;
         assert!(session.is_none());
     }
 
     #[tokio::test]
     async fn test_revoke_session() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
@@ -303,7 +275,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_agent_revokes_all_sessions() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
@@ -321,26 +293,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cleanup_expired_sessions() {
-        let store = AuthStore::new(Duration::from_millis(1));
+    async fn test_register_dna_for_agent() {
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
 
-        store.create_session(&test_agent(1)).await.unwrap();
-        store.create_session(&test_agent(1)).await.unwrap();
-        assert_eq!(store.session_count().await, 2);
+        let token = store.create_session(&test_agent(1)).await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let dna1 = DnaHash::from_raw_32(vec![1u8; 32]);
+        let dna2 = DnaHash::from_raw_32(vec![2u8; 32]);
 
-        let removed = store.cleanup_expired_sessions().await;
+        // Initially no DNAs registered
+        let session = store.validate_session(token.as_str()).await.unwrap();
+        assert!(!session.has_dna(&dna1));
+
+        // Register DNA
+        store.register_dna_for_agent(&test_agent(1), &dna1).await;
+        let session = store.validate_session(token.as_str()).await.unwrap();
+        assert!(session.has_dna(&dna1));
+        assert!(!session.has_dna(&dna2));
+
+        // Register second DNA
+        store.register_dna_for_agent(&test_agent(1), &dna2).await;
+        let session = store.validate_session(token.as_str()).await.unwrap();
+        assert!(session.has_dna(&dna1));
+        assert!(session.has_dna(&dna2));
+    }
+
+    #[tokio::test]
+    async fn test_revoke_sessions_for_agent() {
+        let store = AuthStore::new();
+        store
+            .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
+            .await;
+        store
+            .add_agent(test_allowed_agent(2, &[Capability::DhtRead]))
+            .await;
+
+        let token1 = store.create_session(&test_agent(1)).await.unwrap();
+        let token2 = store.create_session(&test_agent(1)).await.unwrap();
+        let token3 = store.create_session(&test_agent(2)).await.unwrap();
+        assert_eq!(store.session_count().await, 3);
+
+        let removed = store.revoke_sessions_for_agent(&test_agent(1)).await;
         assert_eq!(removed, 2);
-        assert_eq!(store.session_count().await, 0);
+        assert!(store.validate_session(token1.as_str()).await.is_none());
+        assert!(store.validate_session(token2.as_str()).await.is_none());
+        // Agent 2's session is untouched
+        assert!(store.validate_session(token3.as_str()).await.is_some());
     }
 
     #[tokio::test]
     async fn test_ws_sender_register_and_unregister() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let (tx, _rx) = mpsc::channel(1);
 
         store.register_ws_sender(&test_agent(1), tx.clone()).await;
@@ -352,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_agent_drops_ws_senders() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(test_allowed_agent(1, &[Capability::DhtRead]))
             .await;
@@ -371,7 +377,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_ws_connections_per_agent() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
 
