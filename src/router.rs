@@ -1,6 +1,7 @@
 //! Router configuration for h2hc-linker
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, post},
     Router,
 };
@@ -42,15 +43,17 @@ pub fn create_router(app_state: AppState) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let body_limit = app_state.configuration.payload_limit_bytes;
+
     if app_state.auth_store.is_some() {
-        create_authenticated_router(app_state, cors)
+        create_authenticated_router(app_state, cors, body_limit)
     } else {
-        create_open_router(app_state, cors)
+        create_open_router(app_state, cors, body_limit)
     }
 }
 
 /// Router with no auth (current behavior when H2HC_LINKER_ADMIN_SECRET is not set).
-fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
+fn create_open_router(app_state: AppState, cors: CorsLayer, body_limit: usize) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health_check))
@@ -70,11 +73,12 @@ fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
             kitsune_routes().with_state(app_state.kitsune_state.clone()),
         )
         .with_state(app_state)
+        .layer(DefaultBodyLimit::max(body_limit))
         .layer(cors)
 }
 
 /// Router with auth middleware (when H2HC_LINKER_ADMIN_SECRET is set).
-fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
+fn create_authenticated_router(app_state: AppState, cors: CorsLayer, body_limit: usize) -> Router {
     // DHT read routes (capability check, then DNA scope check)
     let dht_read_routes = dht_routes()
         .route_layer(axum::middleware::from_fn_with_state(
@@ -129,5 +133,6 @@ fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
         // Zome call (deprecated, no auth)
         .route("/api/{dna_hash}/{zome_name}/{fn_name}", get(zome_call))
         .with_state(app_state)
+        .layer(DefaultBodyLimit::max(body_limit))
         .layer(cors)
 }

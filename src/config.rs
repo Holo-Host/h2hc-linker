@@ -100,7 +100,7 @@ impl Default for Configuration {
             conductor_url: None,
             bootstrap_url: String::new(),
             relay_url: None,
-            payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
+            payload_limit_bytes: 20 * 1024 * 1024, // 20MB - must fit largest Holochain entry (16MB) + base64/JSON overhead
             websocket: WebSocketConfig::default(),
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
             admin_secret: None,
