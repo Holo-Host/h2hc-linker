@@ -3,7 +3,9 @@
 //! Provides route-layer middleware functions that check Bearer tokens
 //! against the AuthStore and verify capabilities.
 
-use axum::extract::{Request, State};
+use std::collections::HashMap;
+
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -100,10 +102,11 @@ async fn check_capability(
 /// Must be layered AFTER a capability middleware (require_dht_read/write) which
 /// populates AuthContext in request extensions.
 ///
-/// Extracts `dna_hash` from the URL path and checks it against the session's
-/// registered DNAs. Returns 403 if the DNA is not in scope.
+/// Extracts `dna_hash` from axum's path parameters and checks it against the
+/// session's registered DNAs. Returns 403 if the DNA is not in scope.
 pub async fn require_dna_scope(
     State(_state): State<AppState>,
+    Path(params): Path<HashMap<String, String>>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -116,13 +119,8 @@ pub async fn require_dna_scope(
             .into_response();
     };
 
-    // Extract dna_hash from URL path.
-    // All DHT routes follow /dht/{dna_hash}/... pattern, so dna_hash is at segment index 1.
-    let path = req.uri().path();
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-    let dna_hash_str = match segments.get(1) {
-        Some(s) => *s,
+    let dna_hash_str = match params.get("dna_hash") {
+        Some(s) => s.as_str(),
         None => {
             return (StatusCode::BAD_REQUEST, "Missing DNA hash in path").into_response();
         }

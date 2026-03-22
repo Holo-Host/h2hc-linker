@@ -854,6 +854,7 @@ impl DhtQuery {
     }
 
     /// Send a get_agent_activity request to a specific peer.
+    #[allow(clippy::too_many_arguments)]
     async fn send_get_agent_activity_request(
         space: DynSpace,
         to_agent: AgentPubKey,

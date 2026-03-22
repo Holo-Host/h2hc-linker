@@ -17,6 +17,23 @@ use crate::routes::{
 };
 use crate::service::AppState;
 
+/// DHT route definitions shared between open and authenticated routers.
+fn dht_routes() -> Router<AppState> {
+    Router::new()
+        .route("/dht/{dna_hash}/record/{hash}", get(dht_get_record))
+        .route("/dht/{dna_hash}/details/{hash}", get(dht_get_details))
+        .route("/dht/{dna_hash}/links", get(dht_get_links))
+        .route("/dht/{dna_hash}/count_links", get(dht_count_links))
+        .route(
+            "/dht/{dna_hash}/agent_activity/{agent_hash}",
+            get(dht_get_agent_activity),
+        )
+        .route(
+            "/dht/{dna_hash}/must_get_agent_activity",
+            post(dht_must_get_agent_activity),
+        )
+}
+
 /// Create the main router for h2hc-linker
 pub fn create_router(app_state: AppState) -> Router {
     // CORS configuration - allow all origins for development
@@ -41,20 +58,8 @@ fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
         .route("/ws", get(ws_handler))
         // Test endpoint for signal forwarding (development only)
         .route("/test/signal", post(test_signal))
-        // DHT endpoints
-        .route("/dht/{dna_hash}/record/{hash}", get(dht_get_record))
-        .route("/dht/{dna_hash}/details/{hash}", get(dht_get_details))
-        .route("/dht/{dna_hash}/links", get(dht_get_links))
-        .route("/dht/{dna_hash}/count_links", get(dht_count_links))
-        // Agent activity endpoints
-        .route(
-            "/dht/{dna_hash}/agent_activity/{agent_hash}",
-            get(dht_get_agent_activity),
-        )
-        .route(
-            "/dht/{dna_hash}/must_get_agent_activity",
-            post(dht_must_get_agent_activity),
-        )
+        // DHT read endpoints
+        .merge(dht_routes())
         // DHT publish endpoint (via kitsune2)
         .route("/dht/{dna_hash}/publish", post(dht_publish))
         // Zome call endpoint (via conductor)
@@ -71,19 +76,7 @@ fn create_open_router(app_state: AppState, cors: CorsLayer) -> Router {
 /// Router with auth middleware (when H2HC_LINKER_ADMIN_SECRET is set).
 fn create_authenticated_router(app_state: AppState, cors: CorsLayer) -> Router {
     // DHT read routes (capability check, then DNA scope check)
-    let dht_read_routes = Router::new()
-        .route("/dht/{dna_hash}/record/{hash}", get(dht_get_record))
-        .route("/dht/{dna_hash}/details/{hash}", get(dht_get_details))
-        .route("/dht/{dna_hash}/links", get(dht_get_links))
-        .route("/dht/{dna_hash}/count_links", get(dht_count_links))
-        .route(
-            "/dht/{dna_hash}/agent_activity/{agent_hash}",
-            get(dht_get_agent_activity),
-        )
-        .route(
-            "/dht/{dna_hash}/must_get_agent_activity",
-            post(dht_must_get_agent_activity),
-        )
+    let dht_read_routes = dht_routes()
         .route_layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             require_dna_scope,

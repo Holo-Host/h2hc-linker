@@ -60,6 +60,7 @@ impl WirePreflightMessage {
     }
 
     /// Create a new preflight message with the given agents.
+    #[cfg(test)]
     pub fn with_agents(agents: Vec<String>) -> Self {
         Self {
             compat: NetworkCompatParams::default(),

@@ -46,59 +46,109 @@ impl AuthStore {
     // --- Agent management (delegated) ---
 
     pub async fn add_agent(&self, agent: AllowedAgent) {
-        self.store.add_agent(agent).await;
+        if let Err(e) = self.store.add_agent(agent).await {
+            tracing::error!(error = %e, "Failed to add agent");
+        }
     }
 
     /// Remove an agent. Revokes all sessions and closes all WS connections.
     pub async fn remove_agent(&self, agent_pubkey: &AgentPubKey) -> bool {
-        let removed = self.store.remove_agent(agent_pubkey).await;
-        if removed {
-            let mut ws = self.ws_senders.write().await;
-            ws.remove(agent_pubkey);
+        match self.store.remove_agent(agent_pubkey).await {
+            Ok(removed) => {
+                if removed {
+                    let mut ws = self.ws_senders.write().await;
+                    ws.remove(agent_pubkey);
+                }
+                removed
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to remove agent");
+                false
+            }
         }
-        removed
     }
 
     pub async fn list_agents(&self) -> Vec<AllowedAgent> {
-        self.store.list_agents().await
+        self.store.list_agents().await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "Failed to list agents");
+            Vec::new()
+        })
     }
 
     pub async fn is_agent_allowed(&self, agent_pubkey: &AgentPubKey) -> bool {
-        self.store.is_agent_allowed(agent_pubkey).await
+        self.store
+            .is_agent_allowed(agent_pubkey)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "Failed to check agent allowed");
+                false
+            })
     }
 
     pub async fn get_agent(&self, agent_pubkey: &AgentPubKey) -> Option<AllowedAgent> {
-        self.store.get_agent(agent_pubkey).await
+        self.store
+            .get_agent(agent_pubkey)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "Failed to get agent");
+                None
+            })
     }
 
     // --- Session management (delegated) ---
 
     pub async fn create_session(&self, agent_pubkey: &AgentPubKey) -> Option<SessionToken> {
-        self.store.create_session(agent_pubkey).await
+        self.store
+            .create_session(agent_pubkey)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "Failed to create session");
+                None
+            })
     }
 
     pub async fn validate_session(&self, token: &str) -> Option<SessionInfo> {
-        self.store.validate_session(token).await
+        self.store
+            .validate_session(token)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "Failed to validate session");
+                None
+            })
     }
 
     pub async fn revoke_session(&self, token: &str) -> bool {
-        self.store.revoke_session(token).await
+        self.store.revoke_session(token).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "Failed to revoke session");
+            false
+        })
     }
 
     /// Register a DNA for all sessions belonging to an agent.
     /// Called when a client sends a Register message on the WebSocket.
     pub async fn register_dna_for_agent(&self, agent_pubkey: &AgentPubKey, dna: &DnaHash) {
-        self.store.register_dna_for_agent(agent_pubkey, dna).await;
+        if let Err(e) = self.store.register_dna_for_agent(agent_pubkey, dna).await {
+            tracing::error!(error = %e, "Failed to register DNA for agent");
+        }
     }
 
     /// Revoke all sessions for an agent. Called on WebSocket disconnect.
     pub async fn revoke_sessions_for_agent(&self, agent_pubkey: &AgentPubKey) -> usize {
-        self.store.revoke_sessions_for_agent(agent_pubkey).await
+        self.store
+            .revoke_sessions_for_agent(agent_pubkey)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "Failed to revoke sessions for agent");
+                0
+            })
     }
 
     /// Get total session count (for testing/monitoring).
     pub async fn session_count(&self) -> usize {
-        self.store.session_count().await
+        self.store.session_count().await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "Failed to get session count");
+            0
+        })
     }
 
     // --- WS connection tracking (always in-memory) ---

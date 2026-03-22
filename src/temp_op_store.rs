@@ -57,13 +57,13 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone)]
 struct StoredOpRecord {
     /// The OpId (DhtOpHash + basis location).
-    op_id: OpId,
+    _op_id: OpId,
     /// The raw op data (msgpack-encoded DhtOp).
     op_data: Bytes,
     /// When this op was stored.
     stored_at: Instant,
     /// Creation timestamp from the op.
-    created_at: Timestamp,
+    _created_at: Timestamp,
 }
 
 /// Factory for creating TempOpStore instances.
@@ -181,10 +181,10 @@ impl TempOpStoreHandle {
 
         // Store the op
         let record = StoredOpRecord {
-            op_id: op_id.clone(),
+            _op_id: op_id.clone(),
             op_data: op_bytes,
             stored_at: Instant::now(),
-            created_at,
+            _created_at: created_at,
         };
 
         let mut lock = self.inner.write().await;
@@ -443,10 +443,10 @@ mod tests {
         inner.ops.insert(
             expired_op_id.clone(),
             StoredOpRecord {
-                op_id: expired_op_id.clone(),
+                _op_id: expired_op_id.clone(),
                 op_data: Bytes::from_static(&[1, 2, 3]),
                 stored_at: Instant::now() - Duration::from_secs(120), // 2 minutes ago
-                created_at: K2Timestamp::from_micros(0),
+                _created_at: K2Timestamp::from_micros(0),
             },
         );
 
@@ -455,10 +455,10 @@ mod tests {
         inner.ops.insert(
             fresh_op_id.clone(),
             StoredOpRecord {
-                op_id: fresh_op_id.clone(),
+                _op_id: fresh_op_id.clone(),
                 op_data: Bytes::from_static(&[4, 5, 6]),
                 stored_at: Instant::now(),
-                created_at: K2Timestamp::from_micros(0),
+                _created_at: K2Timestamp::from_micros(0),
             },
         );
 

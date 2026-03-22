@@ -5,7 +5,7 @@ use holochain_types::prelude::{AgentPubKey, DnaHash};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-use super::session_store::SessionStore;
+use super::session_store::{SessionStore, SessionStoreResult};
 use super::types::{AllowedAgent, SessionInfo, SessionToken};
 
 /// Stores agents and sessions in memory (no persistence across restarts).
@@ -36,14 +36,15 @@ impl MemorySessionStore {
 
 #[async_trait]
 impl SessionStore for MemorySessionStore {
-    async fn add_agent(&self, agent: AllowedAgent) {
+    async fn add_agent(&self, agent: AllowedAgent) -> SessionStoreResult<()> {
         let mut inner = self.inner.write().await;
         inner
             .allowed_agents
             .insert(agent.agent_pubkey.clone(), agent);
+        Ok(())
     }
 
-    async fn remove_agent(&self, agent_pubkey: &AgentPubKey) -> bool {
+    async fn remove_agent(&self, agent_pubkey: &AgentPubKey) -> SessionStoreResult<bool> {
         let mut inner = self.inner.write().await;
         let removed = inner.allowed_agents.remove(agent_pubkey).is_some();
         if removed {
@@ -51,27 +52,35 @@ impl SessionStore for MemorySessionStore {
                 .sessions
                 .retain(|_, s| &s.agent_pubkey != agent_pubkey);
         }
-        removed
+        Ok(removed)
     }
 
-    async fn list_agents(&self) -> Vec<AllowedAgent> {
+    async fn list_agents(&self) -> SessionStoreResult<Vec<AllowedAgent>> {
         let inner = self.inner.read().await;
-        inner.allowed_agents.values().cloned().collect()
+        Ok(inner.allowed_agents.values().cloned().collect())
     }
 
-    async fn is_agent_allowed(&self, agent_pubkey: &AgentPubKey) -> bool {
+    async fn is_agent_allowed(&self, agent_pubkey: &AgentPubKey) -> SessionStoreResult<bool> {
         let inner = self.inner.read().await;
-        inner.allowed_agents.contains_key(agent_pubkey)
+        Ok(inner.allowed_agents.contains_key(agent_pubkey))
     }
 
-    async fn get_agent(&self, agent_pubkey: &AgentPubKey) -> Option<AllowedAgent> {
+    async fn get_agent(
+        &self,
+        agent_pubkey: &AgentPubKey,
+    ) -> SessionStoreResult<Option<AllowedAgent>> {
         let inner = self.inner.read().await;
-        inner.allowed_agents.get(agent_pubkey).cloned()
+        Ok(inner.allowed_agents.get(agent_pubkey).cloned())
     }
 
-    async fn create_session(&self, agent_pubkey: &AgentPubKey) -> Option<SessionToken> {
+    async fn create_session(
+        &self,
+        agent_pubkey: &AgentPubKey,
+    ) -> SessionStoreResult<Option<SessionToken>> {
         let inner = self.inner.read().await;
-        let allowed = inner.allowed_agents.get(agent_pubkey)?;
+        let Some(allowed) = inner.allowed_agents.get(agent_pubkey) else {
+            return Ok(None);
+        };
         let capabilities = allowed.capabilities.clone();
         drop(inner);
 
@@ -84,40 +93,48 @@ impl SessionStore for MemorySessionStore {
 
         let mut inner = self.inner.write().await;
         inner.sessions.insert(token.0.clone(), info);
-        Some(token)
+        Ok(Some(token))
     }
 
-    async fn validate_session(&self, token: &str) -> Option<SessionInfo> {
+    async fn validate_session(&self, token: &str) -> SessionStoreResult<Option<SessionInfo>> {
         let inner = self.inner.read().await;
-        inner.sessions.get(token).cloned()
+        Ok(inner.sessions.get(token).cloned())
     }
 
-    async fn revoke_session(&self, token: &str) -> bool {
+    async fn revoke_session(&self, token: &str) -> SessionStoreResult<bool> {
         let mut inner = self.inner.write().await;
-        inner.sessions.remove(token).is_some()
+        Ok(inner.sessions.remove(token).is_some())
     }
 
-    async fn register_dna_for_agent(&self, agent_pubkey: &AgentPubKey, dna: &DnaHash) {
+    async fn register_dna_for_agent(
+        &self,
+        agent_pubkey: &AgentPubKey,
+        dna: &DnaHash,
+    ) -> SessionStoreResult<()> {
         let mut inner = self.inner.write().await;
         for session in inner.sessions.values_mut() {
             if &session.agent_pubkey == agent_pubkey {
                 session.registered_dnas.insert(dna.clone());
             }
         }
+        Ok(())
     }
 
-    async fn revoke_sessions_for_agent(&self, agent_pubkey: &AgentPubKey) -> usize {
+    async fn revoke_sessions_for_agent(
+        &self,
+        agent_pubkey: &AgentPubKey,
+    ) -> SessionStoreResult<usize> {
         let mut inner = self.inner.write().await;
         let before = inner.sessions.len();
         inner
             .sessions
             .retain(|_, s| &s.agent_pubkey != agent_pubkey);
-        before - inner.sessions.len()
+        Ok(before - inner.sessions.len())
     }
 
-    async fn session_count(&self) -> usize {
+    async fn session_count(&self) -> SessionStoreResult<usize> {
         let inner = self.inner.read().await;
-        inner.sessions.len()
+        Ok(inner.sessions.len())
     }
 }
 

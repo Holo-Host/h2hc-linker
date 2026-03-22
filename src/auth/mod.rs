@@ -16,5 +16,6 @@ pub mod memory_store;
 pub mod sqlite_store;
 pub mod store;
 
+pub use session_store::{SessionStoreError, SessionStoreResult};
 pub use store::AuthStore;
 pub use types::{AllowedAgent, AuthContext, Capability, SessionInfo, SessionToken};

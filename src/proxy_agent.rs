@@ -83,11 +83,6 @@ impl ProxyAgent {
             }),
         }
     }
-
-    /// Get the agent public key.
-    pub fn agent_pubkey(&self) -> &AgentPubKey {
-        &self.agent_pubkey
-    }
 }
 
 impl Signer for ProxyAgent {

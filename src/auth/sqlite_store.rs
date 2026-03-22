@@ -9,14 +9,21 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
-use super::session_store::SessionStore;
+use super::session_store::{SessionStore, SessionStoreError, SessionStoreResult};
 use super::types::{AllowedAgent, Capability, SessionInfo, SessionToken};
+
+impl From<rusqlite::Error> for SessionStoreError {
+    fn from(e: rusqlite::Error) -> Self {
+        SessionStoreError::Database(e.to_string())
+    }
+}
 
 /// SQLite-backed session store.
 ///
-/// Uses `std::sync::Mutex` around `rusqlite::Connection` — all DB calls are
-/// dispatched via `tokio::task::spawn_blocking` so we never hold the lock
-/// across an `.await`.
+/// Uses `std::sync::Mutex` around `rusqlite::Connection`. The sync lock is
+/// held directly in async methods — this is acceptable because SQLite operations
+/// on a local file are sub-millisecond and the lock is never held across an
+/// `.await` point.
 pub struct SqliteSessionStore {
     conn: Mutex<Connection>,
 }
@@ -88,7 +95,7 @@ impl SqliteSessionStore {
 
 #[async_trait]
 impl SessionStore for SqliteSessionStore {
-    async fn add_agent(&self, agent: AllowedAgent) {
+    async fn add_agent(&self, agent: AllowedAgent) -> SessionStoreResult<()> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent.agent_pubkey.to_string();
         let caps = Self::caps_to_json(&agent.capabilities);
@@ -97,57 +104,49 @@ impl SessionStore for SqliteSessionStore {
             "INSERT OR REPLACE INTO allowed_agents (agent_pubkey, capabilities, label)
              VALUES (?1, ?2, ?3)",
             rusqlite::params![pk, caps, label],
-        )
-        .expect("add_agent insert failed");
+        )?;
+        Ok(())
     }
 
-    async fn remove_agent(&self, agent_pubkey: &AgentPubKey) -> bool {
+    async fn remove_agent(&self, agent_pubkey: &AgentPubKey) -> SessionStoreResult<bool> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent_pubkey.to_string();
 
-        // Delete session_dnas for this agent's sessions, then sessions, then agent.
-        // Foreign key cascades handle session_dnas from sessions, but we also
-        // clean up by agent_pubkey explicitly for safety.
+        // Sessions cascade-delete session_dnas, but also clean up by agent_pubkey
+        // for any orphaned rows.
         conn.execute(
             "DELETE FROM session_dnas WHERE agent_pubkey = ?1",
             rusqlite::params![pk],
-        )
-        .expect("remove_agent delete session_dnas failed");
+        )?;
 
         conn.execute(
             "DELETE FROM sessions WHERE agent_pubkey = ?1",
             rusqlite::params![pk],
-        )
-        .expect("remove_agent delete sessions failed");
+        )?;
 
-        let rows = conn
-            .execute(
-                "DELETE FROM allowed_agents WHERE agent_pubkey = ?1",
-                rusqlite::params![pk],
-            )
-            .expect("remove_agent delete agent failed");
+        let rows = conn.execute(
+            "DELETE FROM allowed_agents WHERE agent_pubkey = ?1",
+            rusqlite::params![pk],
+        )?;
 
-        rows > 0
+        Ok(rows > 0)
     }
 
-    async fn list_agents(&self) -> Vec<AllowedAgent> {
+    async fn list_agents(&self) -> SessionStoreResult<Vec<AllowedAgent>> {
         let conn = self.conn.lock().expect("lock poisoned");
-        let mut stmt = conn
-            .prepare("SELECT agent_pubkey, capabilities, label FROM allowed_agents")
-            .expect("list_agents prepare failed");
+        let mut stmt =
+            conn.prepare("SELECT agent_pubkey, capabilities, label FROM allowed_agents")?;
 
-        let rows = stmt
-            .query_map([], |row| {
-                let pk_str: String = row.get(0)?;
-                let caps_json: String = row.get(1)?;
-                let label: Option<String> = row.get(2)?;
-                Ok((pk_str, caps_json, label))
-            })
-            .expect("list_agents query failed");
+        let rows = stmt.query_map([], |row| {
+            let pk_str: String = row.get(0)?;
+            let caps_json: String = row.get(1)?;
+            let label: Option<String> = row.get(2)?;
+            Ok((pk_str, caps_json, label))
+        })?;
 
         let mut agents = Vec::new();
         for row in rows {
-            let (pk_str, caps_json, label) = row.expect("list_agents row failed");
+            let (pk_str, caps_json, label) = row?;
             if let Ok(agent_pubkey) = AgentPubKey::try_from(pk_str.as_str()) {
                 agents.push(AllowedAgent {
                     agent_pubkey,
@@ -156,26 +155,27 @@ impl SessionStore for SqliteSessionStore {
                 });
             }
         }
-        agents
+        Ok(agents)
     }
 
-    async fn is_agent_allowed(&self, agent_pubkey: &AgentPubKey) -> bool {
+    async fn is_agent_allowed(&self, agent_pubkey: &AgentPubKey) -> SessionStoreResult<bool> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent_pubkey.to_string();
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM allowed_agents WHERE agent_pubkey = ?1",
-                rusqlite::params![pk],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-        count > 0
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM allowed_agents WHERE agent_pubkey = ?1",
+            rusqlite::params![pk],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
-    async fn get_agent(&self, agent_pubkey: &AgentPubKey) -> Option<AllowedAgent> {
+    async fn get_agent(
+        &self,
+        agent_pubkey: &AgentPubKey,
+    ) -> SessionStoreResult<Option<AllowedAgent>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent_pubkey.to_string();
-        conn.query_row(
+        let result = conn.query_row(
             "SELECT capabilities, label FROM allowed_agents WHERE agent_pubkey = ?1",
             rusqlite::params![pk],
             |row| {
@@ -183,66 +183,73 @@ impl SessionStore for SqliteSessionStore {
                 let label: Option<String> = row.get(1)?;
                 Ok((caps_json, label))
             },
-        )
-        .ok()
-        .map(|(caps_json, label)| AllowedAgent {
-            agent_pubkey: agent_pubkey.clone(),
-            capabilities: Self::caps_from_json(&caps_json),
-            label,
-        })
+        );
+        match result {
+            Ok((caps_json, label)) => Ok(Some(AllowedAgent {
+                agent_pubkey: agent_pubkey.clone(),
+                capabilities: Self::caps_from_json(&caps_json),
+                label,
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
-    async fn create_session(&self, agent_pubkey: &AgentPubKey) -> Option<SessionToken> {
+    async fn create_session(
+        &self,
+        agent_pubkey: &AgentPubKey,
+    ) -> SessionStoreResult<Option<SessionToken>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent_pubkey.to_string();
 
         // Look up agent capabilities
-        let caps_json: String = conn
-            .query_row(
-                "SELECT capabilities FROM allowed_agents WHERE agent_pubkey = ?1",
-                rusqlite::params![pk],
-                |row| row.get(0),
-            )
-            .ok()?;
+        let caps_json: String = match conn.query_row(
+            "SELECT capabilities FROM allowed_agents WHERE agent_pubkey = ?1",
+            rusqlite::params![pk],
+            |row| row.get(0),
+        ) {
+            Ok(caps) => caps,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
 
         let token = SessionToken::generate();
         conn.execute(
             "INSERT INTO sessions (token, agent_pubkey, capabilities) VALUES (?1, ?2, ?3)",
             rusqlite::params![token.as_str(), pk, caps_json],
-        )
-        .expect("create_session insert failed");
+        )?;
 
-        Some(token)
+        Ok(Some(token))
     }
 
-    async fn validate_session(&self, token: &str) -> Option<SessionInfo> {
+    async fn validate_session(&self, token: &str) -> SessionStoreResult<Option<SessionInfo>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
-        let (pk_str, caps_json) = conn
-            .query_row(
-                "SELECT agent_pubkey, capabilities FROM sessions WHERE token = ?1",
-                rusqlite::params![token],
-                |row| {
-                    let pk: String = row.get(0)?;
-                    let caps: String = row.get(1)?;
-                    Ok((pk, caps))
-                },
-            )
-            .ok()?;
+        let (pk_str, caps_json) = match conn.query_row(
+            "SELECT agent_pubkey, capabilities FROM sessions WHERE token = ?1",
+            rusqlite::params![token],
+            |row| {
+                let pk: String = row.get(0)?;
+                let caps: String = row.get(1)?;
+                Ok((pk, caps))
+            },
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
 
-        let agent_pubkey = AgentPubKey::try_from(pk_str.as_str()).ok()?;
+        let Some(agent_pubkey) = AgentPubKey::try_from(pk_str.as_str()).ok() else {
+            return Ok(None);
+        };
         let capabilities = Self::caps_from_json(&caps_json);
 
         // Collect registered DNAs
-        let mut stmt = conn
-            .prepare("SELECT dna_hash FROM session_dnas WHERE token = ?1")
-            .expect("validate_session prepare failed");
-        let dna_rows = stmt
-            .query_map(rusqlite::params![token], |row| {
-                let dna_str: String = row.get(0)?;
-                Ok(dna_str)
-            })
-            .expect("validate_session dna query failed");
+        let mut stmt = conn.prepare("SELECT dna_hash FROM session_dnas WHERE token = ?1")?;
+        let dna_rows = stmt.query_map(rusqlite::params![token], |row| {
+            let dna_str: String = row.get(0)?;
+            Ok(dna_str)
+        })?;
 
         let mut registered_dnas = HashSet::new();
         for dna_str in dna_rows.flatten() {
@@ -251,26 +258,28 @@ impl SessionStore for SqliteSessionStore {
             }
         }
 
-        Some(SessionInfo {
+        Ok(Some(SessionInfo {
             agent_pubkey,
             capabilities,
             registered_dnas,
-        })
+        }))
     }
 
-    async fn revoke_session(&self, token: &str) -> bool {
+    async fn revoke_session(&self, token: &str) -> SessionStoreResult<bool> {
         let conn = self.conn.lock().expect("lock poisoned");
         // CASCADE deletes session_dnas
-        let rows = conn
-            .execute(
-                "DELETE FROM sessions WHERE token = ?1",
-                rusqlite::params![token],
-            )
-            .expect("revoke_session delete failed");
-        rows > 0
+        let rows = conn.execute(
+            "DELETE FROM sessions WHERE token = ?1",
+            rusqlite::params![token],
+        )?;
+        Ok(rows > 0)
     }
 
-    async fn register_dna_for_agent(&self, agent_pubkey: &AgentPubKey, dna: &DnaHash) {
+    async fn register_dna_for_agent(
+        &self,
+        agent_pubkey: &AgentPubKey,
+        dna: &DnaHash,
+    ) -> SessionStoreResult<()> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent_pubkey.to_string();
         let dna_str = dna.to_string();
@@ -280,28 +289,29 @@ impl SessionStore for SqliteSessionStore {
             "INSERT OR IGNORE INTO session_dnas (token, dna_hash, agent_pubkey)
              SELECT token, ?1, ?2 FROM sessions WHERE agent_pubkey = ?2",
             rusqlite::params![dna_str, pk],
-        )
-        .expect("register_dna_for_agent insert failed");
+        )?;
+        Ok(())
     }
 
-    async fn revoke_sessions_for_agent(&self, agent_pubkey: &AgentPubKey) -> usize {
+    async fn revoke_sessions_for_agent(
+        &self,
+        agent_pubkey: &AgentPubKey,
+    ) -> SessionStoreResult<usize> {
         let conn = self.conn.lock().expect("lock poisoned");
         let pk = agent_pubkey.to_string();
 
         // CASCADE handles session_dnas
-        conn.execute(
+        let rows = conn.execute(
             "DELETE FROM sessions WHERE agent_pubkey = ?1",
             rusqlite::params![pk],
-        )
-        .expect("revoke_sessions_for_agent delete failed")
+        )?;
+        Ok(rows)
     }
 
-    async fn session_count(&self) -> usize {
+    async fn session_count(&self) -> SessionStoreResult<usize> {
         let conn = self.conn.lock().expect("lock poisoned");
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
-            .unwrap_or(0);
-        count as usize
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+        Ok(count as usize)
     }
 }
 
@@ -327,16 +337,19 @@ mod tests {
                     capabilities: HashSet::from([Capability::DhtRead]),
                     label: Some("browser".to_string()),
                 })
-                .await;
+                .await
+                .unwrap();
             let token = store
                 .create_session(&AgentPubKey::from_raw_32(vec![1u8; 32]))
                 .await
+                .unwrap()
                 .unwrap();
 
             let dna = DnaHash::from_raw_32(vec![10u8; 32]);
             store
                 .register_dna_for_agent(&AgentPubKey::from_raw_32(vec![1u8; 32]), &dna)
-                .await;
+                .await
+                .unwrap();
 
             token_str = token.0.clone();
         }
@@ -345,14 +358,13 @@ mod tests {
         let store = SqliteSessionStore::new(&db_path).unwrap();
 
         // Agent still present
-        assert!(
-            store
-                .is_agent_allowed(&AgentPubKey::from_raw_32(vec![1u8; 32]))
-                .await
-        );
+        assert!(store
+            .is_agent_allowed(&AgentPubKey::from_raw_32(vec![1u8; 32]))
+            .await
+            .unwrap());
 
         // Session still valid
-        let session = store.validate_session(&token_str).await.unwrap();
+        let session = store.validate_session(&token_str).await.unwrap().unwrap();
         assert_eq!(
             session.agent_pubkey,
             AgentPubKey::from_raw_32(vec![1u8; 32])
