@@ -225,10 +225,8 @@ pub async fn dht_get_links(
                 "Direct DHT get_links response"
             );
             let links = wire_link_ops_to_links(&wire_link_ops, &base, tag.as_ref());
-            let json_value = serde_json::to_value(&links).unwrap_or_else(|e| {
-                tracing::warn!("Failed to serialize links: {}", e);
-                serde_json::json!([])
-            });
+            let json_value = serde_json::to_value(&links)
+                .map_err(|e| LinkerError::Serialization(format!("Failed to serialize links: {e}")))?;
             Ok(Json(json_value))
         }
         None => Ok(Json(serde_json::json!([]))),

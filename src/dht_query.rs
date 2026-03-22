@@ -215,8 +215,10 @@ impl DhtQuery {
         let agents = self.get_peers_for_location(&space, loc).await?;
 
         if agents.is_empty() {
-            info!(dna = %dna_hash, loc, "No peers found for DHT location");
-            return Ok(None);
+            warn!(dna = %dna_hash, loc, "No peers found for DHT location");
+            return Err(LinkerError::Network(
+                "No peers available for DHT location".to_string(),
+            ));
         }
 
         debug!(
@@ -257,6 +259,11 @@ impl DhtQuery {
                 }
                 Err(e) => {
                     debug!(?e, "Task join error");
+                    if last_result.is_none() {
+                        last_result = Some(Err(LinkerError::Internal(
+                            format!("Task join error: {e}"),
+                        )));
+                    }
                 }
             }
         }
@@ -283,8 +290,10 @@ impl DhtQuery {
         let agents = self.get_peers_for_location(&space, loc).await?;
 
         if agents.is_empty() {
-            info!(dna = %dna_hash, loc, "No peers found for DHT location");
-            return Ok(None);
+            warn!(dna = %dna_hash, loc, "No peers found for DHT location");
+            return Err(LinkerError::Network(
+                "No peers available for DHT location".to_string(),
+            ));
         }
 
         debug!(
@@ -325,6 +334,11 @@ impl DhtQuery {
                 }
                 Err(e) => {
                     debug!(?e, "Task join error");
+                    if last_result.is_none() {
+                        last_result = Some(Err(LinkerError::Internal(
+                            format!("Task join error: {e}"),
+                        )));
+                    }
                 }
             }
         }
@@ -351,8 +365,10 @@ impl DhtQuery {
         let agents = self.get_peers_for_location(&space, loc).await?;
 
         if agents.is_empty() {
-            info!(dna = %dna_hash, loc, "No peers found for DHT location");
-            return Ok(None);
+            warn!(dna = %dna_hash, loc, "No peers found for DHT location");
+            return Err(LinkerError::Network(
+                "No peers available for DHT location".to_string(),
+            ));
         }
 
         debug!(
@@ -393,6 +409,11 @@ impl DhtQuery {
                 }
                 Err(e) => {
                     debug!(?e, "Task join error");
+                    if last_result.is_none() {
+                        last_result = Some(Err(LinkerError::Internal(
+                            format!("Task join error: {e}"),
+                        )));
+                    }
                 }
             }
         }
@@ -727,8 +748,10 @@ impl DhtQuery {
         let agents = self.get_peers_for_location(&space, loc).await?;
 
         if agents.is_empty() {
-            info!(dna = %dna_hash, loc, "No peers found for agent activity query");
-            return Ok(None);
+            warn!(dna = %dna_hash, loc, "No peers found for agent activity query");
+            return Err(LinkerError::Network(
+                "No peers available for agent activity query".to_string(),
+            ));
         }
 
         debug!(
@@ -772,6 +795,11 @@ impl DhtQuery {
                 }
                 Err(e) => {
                     debug!(?e, "Task join error");
+                    if last_result.is_none() {
+                        last_result = Some(Err(LinkerError::Internal(
+                            format!("Task join error: {e}"),
+                        )));
+                    }
                 }
             }
         }
@@ -799,8 +827,10 @@ impl DhtQuery {
         let agents = self.get_peers_for_location(&space, loc).await?;
 
         if agents.is_empty() {
-            info!(dna = %dna_hash, loc, "No peers found for must_get_agent_activity query");
-            return Ok(None);
+            warn!(dna = %dna_hash, loc, "No peers found for must_get_agent_activity query");
+            return Err(LinkerError::Network(
+                "No peers available for must_get_agent_activity query".to_string(),
+            ));
         }
 
         debug!(
@@ -846,6 +876,11 @@ impl DhtQuery {
                 }
                 Err(e) => {
                     debug!(?e, "Task join error");
+                    if last_result.is_none() {
+                        last_result = Some(Err(LinkerError::Internal(
+                            format!("Task join error: {e}"),
+                        )));
+                    }
                 }
             }
         }
