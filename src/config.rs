@@ -4,6 +4,16 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// How session/agent state is persisted.
+#[derive(Debug, Clone, Default)]
+pub enum SessionStoreConfig {
+    /// In-memory only (lost on restart). Default.
+    #[default]
+    Memory,
+    /// SQLite file at the given path.
+    Sqlite { path: PathBuf },
+}
+
 /// Configure Kitsune2 Reporting.
 ///
 /// Matches the conductor's `ReportConfig` enum so the log-collector
@@ -74,8 +84,8 @@ pub struct Configuration {
     /// When set, enables the auth layer.
     pub admin_secret: Option<String>,
 
-    /// Session token TTL (from H2HC_LINKER_SESSION_TTL_SECS, default 3600)
-    pub session_ttl: Duration,
+    /// Session store backend (from H2HC_LINKER_SESSION_STORE)
+    pub session_store: SessionStoreConfig,
 
     /// Kitsune2 report configuration (from H2HC_LINKER_REPORT)
     pub report: ReportConfig,
@@ -90,11 +100,11 @@ impl Default for Configuration {
             conductor_url: None,
             bootstrap_url: String::new(),
             relay_url: None,
-            payload_limit_bytes: 10 * 1024 * 1024, // 10MB default
+            payload_limit_bytes: 20 * 1024 * 1024, // 20MB - must fit largest Holochain entry (16MB) + base64/JSON overhead
             websocket: WebSocketConfig::default(),
             zome_call_timeout: DEFAULT_ZOME_CALL_TIMEOUT,
             admin_secret: None,
-            session_ttl: Duration::from_secs(3600),
+            session_store: SessionStoreConfig::default(),
             report: ReportConfig::None,
             report_path: PathBuf::from("/tmp/h2hc-linker-reports"),
         }
@@ -169,8 +179,24 @@ impl Configuration {
         if let Ok(secret) = std::env::var("H2HC_LINKER_ADMIN_SECRET") {
             config.admin_secret = Some(secret);
         }
-        if let Ok(ttl) = std::env::var("H2HC_LINKER_SESSION_TTL_SECS") {
-            config.session_ttl = Duration::from_secs(ttl.parse()?);
+
+        // Session store backend
+        if let Ok(val) = std::env::var("H2HC_LINKER_SESSION_STORE") {
+            match val.as_str() {
+                "" | "memory" => {} // default
+                s if s.starts_with("sqlite://") => {
+                    let path = s.trim_start_matches("sqlite://");
+                    config.session_store = SessionStoreConfig::Sqlite {
+                        path: PathBuf::from(path),
+                    };
+                }
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "Unknown H2HC_LINKER_SESSION_STORE value: '{other}'. \
+                         Use 'memory' or 'sqlite:///path/to/sessions.db'."
+                    ));
+                }
+            }
         }
 
         Ok(config)
@@ -202,7 +228,6 @@ mod tests {
         let config = Configuration::default();
         assert!(!config.auth_enabled());
         assert!(config.admin_secret.is_none());
-        assert_eq!(config.session_ttl, Duration::from_secs(3600));
     }
 
     #[test]
@@ -210,11 +235,5 @@ mod tests {
         let mut config = Configuration::default();
         config.admin_secret = Some("test-secret".to_string());
         assert!(config.auth_enabled());
-    }
-
-    #[test]
-    fn test_session_ttl_default() {
-        let config = Configuration::default();
-        assert_eq!(config.session_ttl, Duration::from_secs(3600));
     }
 }

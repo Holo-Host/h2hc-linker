@@ -7,8 +7,7 @@
 
 use bytes::Bytes;
 use kitsune2_api::{
-    BoxFut, Config, DynKitsune, DynSpaceHandler, K2Error, K2Result, KitsuneHandler, SpaceHandler,
-    SpaceId, Url,
+    BoxFut, Config, DynSpaceHandler, K2Error, K2Result, KitsuneHandler, SpaceHandler, SpaceId, Url,
 };
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -124,28 +123,23 @@ impl SpaceHandler for MinimalSpaceHandler {
     }
 }
 
-/// Builder for creating a Kitsune2 instance for h2hc-linker.
+/// Builder for creating a standalone Kitsune2 instance (used in tests).
 ///
-/// # Example
-///
-/// ```ignore
-/// let kitsune = KitsuneBuilder::new()
-///     .with_bootstrap_url("https://bootstrap.example.com")
-///     .with_relay_url("https://relay.example.com")
-///     .build()
-///     .await?;
-/// ```
+/// Production code uses [`KitsuneProxyBuilder`](crate::gateway_kitsune::KitsuneProxyBuilder) instead.
+#[cfg(test)]
 pub struct KitsuneBuilder {
     bootstrap_url: Option<String>,
     relay_url: Option<String>,
 }
 
+#[cfg(test)]
 impl Default for KitsuneBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 impl KitsuneBuilder {
     /// Create a new builder.
     pub fn new() -> Self {
@@ -168,7 +162,10 @@ impl KitsuneBuilder {
     }
 
     /// Build the Kitsune2 instance.
-    pub async fn build(self) -> Result<DynKitsune, Box<dyn std::error::Error + Send + Sync>> {
+    #[allow(dead_code)]
+    pub async fn build(
+        self,
+    ) -> Result<kitsune2_api::DynKitsune, Box<dyn std::error::Error + Send + Sync>> {
         use kitsune2::default_builder;
         use kitsune2_core::factories::{
             CoreBootstrapConfig, CoreBootstrapModConfig, CoreSpaceConfig, CoreSpaceModConfig,
@@ -194,7 +191,6 @@ impl KitsuneBuilder {
             core_space: CoreSpaceConfig {
                 re_sign_expire_time_ms: 10000,
                 re_sign_freq_ms: 10000,
-                ..Default::default()
             },
         })?;
 

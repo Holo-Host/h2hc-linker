@@ -150,7 +150,7 @@ fn generate_store_record_createlink_op_fixture() {
     );
 
     // Verify round-trip
-    let decoded: Op = holochain_serialized_bytes::decode(&inner_bytes).unwrap();
+    let _decoded: Op = holochain_serialized_bytes::decode(&inner_bytes).unwrap();
     println!("Round-trip: OK");
 }
 
@@ -187,7 +187,7 @@ fn generate_store_entry_op_fixture() {
     );
 
     // Verify round-trip
-    let decoded: Op = holochain_serialized_bytes::decode(&inner_bytes).unwrap();
+    let _decoded: Op = holochain_serialized_bytes::decode(&inner_bytes).unwrap();
     println!("Round-trip: OK");
 }
 
@@ -213,7 +213,7 @@ fn generate_register_create_link_op_fixture() {
     println!("  base64: {}", STANDARD.encode(&inner_bytes));
 
     // Verify round-trip
-    let decoded: Op = holochain_serialized_bytes::decode(&inner_bytes).unwrap();
+    let _decoded: Op = holochain_serialized_bytes::decode(&inner_bytes).unwrap();
     println!("Round-trip: OK");
 }
 

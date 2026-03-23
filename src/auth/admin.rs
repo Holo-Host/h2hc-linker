@@ -137,7 +137,6 @@ mod tests {
     use axum::routing::{delete, get, post};
     use axum::Router;
     use http_body_util::BodyExt;
-    use std::time::Duration;
     use tower::ServiceExt;
 
     fn test_app_state(auth_store: AuthStore) -> AppState {
@@ -197,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_and_list_agents_roundtrip() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_admin_router(state);
 
@@ -248,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_agent() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let agent_pubkey = AgentPubKey::from_raw_32(vec![1u8; 32]);
 
         store
@@ -299,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_nonexistent_agent_returns_404() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_admin_router(state);
 
@@ -323,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_requires_secret() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_admin_router(state);
 

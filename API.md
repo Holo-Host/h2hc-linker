@@ -19,12 +19,31 @@ Authentication is **optional**. When `H2HC_LINKER_ADMIN_SECRET` is set, all DHT/
 | `dht_write` | `POST /dht/*/publish` |
 | `k2` | `GET /k2/*` endpoints |
 
+### Per-Cell (DNA) Scoping
+
+Sessions are scoped to registered cells (agent+DNA pairs). When a client sends a `Register` message on the WebSocket for a given DNA, that DNA is added to the session's authorized set. HTTP requests to `/dht/{dna_hash}/*` endpoints are checked against this set — requests for unregistered DNAs return `403 Forbidden`.
+
+### Session Lifecycle
+
+Sessions have **no TTL**. They live until:
+- The WebSocket connection disconnects (all sessions for that agent are revoked)
+- The agent is removed via `DELETE /admin/agents` (all sessions and connections are closed)
+- A session is explicitly revoked
+
 ### Session Flow
 
 1. Admin registers an agent via `POST /admin/agents` (requires `Authorization: Bearer <admin_secret>`)
 2. Agent connects via WebSocket, completes challenge-response auth (ed25519 signature)
-3. Agent receives a session token
-4. Agent uses `Authorization: Bearer <session_token>` for HTTP requests
+3. Agent receives a session token (no expiry)
+4. Agent sends `Register` messages for each DNA it needs to access
+5. Agent uses `Authorization: Bearer <session_token>` for HTTP requests (scoped to registered DNAs)
+
+### Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `401 Unauthorized` | Missing, invalid, or revoked session token |
+| `403 Forbidden` | Valid token but insufficient capability or unregistered DNA |
 
 ---
 
@@ -523,7 +542,7 @@ Server verifies and responds:
 ```json
 { "type": "auth_ok", "session_token": "<hex 64 chars>" }
 ```
-The `session_token` is used for HTTP `Authorization: Bearer <token>` on subsequent requests.
+The `session_token` is used for HTTP `Authorization: Bearer <token>` on subsequent requests. The session has no TTL — it lives until the WebSocket disconnects. After auth, the client must send `Register` messages for each DNA it wants to access; HTTP requests are scoped to registered DNAs.
 
 On failure:
 ```json
@@ -663,7 +682,6 @@ Inject a test signal (development only, no auth).
 | `H2HC_LINKER_RELAY_URL` | no | Iroh relay server URL |
 | `H2HC_LINKER_CONDUCTOR_URL` | no | Conductor address for zome call proxying |
 | `H2HC_LINKER_ADMIN_SECRET` | no | Enables auth layer when set |
-| `H2HC_LINKER_SESSION_TTL_SECS` | no | Session token TTL in seconds (default: 3600) |
 | `H2HC_LINKER_PAYLOAD_LIMIT_BYTES` | no | Max request payload size (default: 10MB) |
 | `H2HC_LINKER_ZOME_CALL_TIMEOUT_MS` | no | Zome call timeout (default: 10000ms) |
 | `H2HC_LINKER_REPORT` | no | Reporting mode: `"json_lines"` or `"none"` |

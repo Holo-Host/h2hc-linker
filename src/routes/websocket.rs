@@ -301,7 +301,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Unregister WS sender from auth store
+    // Unregister WS sender from auth store but keep sessions alive.
+    // Sessions are NOT revoked on disconnect — the browser will reconnect
+    // momentarily (especially through Cloudflare tunnels) and HTTP requests
+    // should continue working with the existing session token in the meantime.
+    // New sessions created on reconnect will replace the old ones naturally.
     if let (Some(ref auth_store), Some(ref agent)) =
         (&state.auth_store, &conn_state.authenticated_agent)
     {
@@ -391,6 +395,11 @@ async fn handle_client_message(
                 .agent_proxy
                 .register(dna.clone(), agent.clone(), sender.clone())
                 .await;
+
+            // Register DNA in auth session so HTTP requests are scoped to this cell
+            if let Some(ref auth_store) = app_state.auth_store {
+                auth_store.register_dna_for_agent(&agent, &dna).await;
+            }
 
             // If kitsune2 is configured, join the agent to the space
             if let Some(ref gateway_kitsune) = app_state.gateway_kitsune {

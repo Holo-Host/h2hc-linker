@@ -62,6 +62,7 @@ pub struct KitsuneProxy {
 
 impl KitsuneProxy {
     /// Create a new KitsuneProxy with the given agent proxy manager.
+    #[cfg(test)]
     pub fn new(agent_proxy: AgentProxyManager) -> Self {
         Self {
             agent_proxy,
@@ -445,7 +446,6 @@ impl KitsuneProxyBuilder {
             core_space: CoreSpaceConfig {
                 re_sign_expire_time_ms: 10000,
                 re_sign_freq_ms: 10000,
-                ..Default::default()
             },
         })?;
 
@@ -485,6 +485,8 @@ impl KitsuneProxyBuilder {
 /// // When browser agent disconnects
 /// gateway_kitsune.agent_leave(&dna_hash, &agent_pubkey).await;
 /// ```
+type AgentMap = Arc<RwLock<HashMap<(DnaHash, AgentPubKey), Arc<ProxyAgent>>>>;
+
 #[derive(Clone)]
 pub struct GatewayKitsune {
     kitsune: DynKitsune,
@@ -494,7 +496,7 @@ pub struct GatewayKitsune {
     spaces: Arc<RwLock<HashMap<DnaHash, DynSpace>>>,
     /// Registered agents by (DnaHash, AgentPubKey).
     /// Value is the ProxyAgent for potential future use.
-    agents: Arc<RwLock<HashMap<(DnaHash, AgentPubKey), Arc<ProxyAgent>>>>,
+    agents: AgentMap,
 }
 
 impl std::fmt::Debug for GatewayKitsune {

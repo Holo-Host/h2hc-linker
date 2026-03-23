@@ -3,13 +3,16 @@
 //! Provides route-layer middleware functions that check Bearer tokens
 //! against the AuthStore and verify capabilities.
 
-use axum::extract::{Request, State};
+use std::collections::HashMap;
+
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use super::types::{AuthContext, Capability};
 use crate::service::AppState;
+use holochain_types::prelude::DnaHash;
 
 /// Extract Bearer token from Authorization header.
 fn extract_bearer_token(req: &Request) -> Option<&str> {
@@ -88,7 +91,51 @@ async fn check_capability(
     req.extensions_mut().insert(AuthContext {
         agent_pubkey: session.agent_pubkey,
         capabilities: session.capabilities,
+        registered_dnas: session.registered_dnas,
     });
+
+    next.run(req).await
+}
+
+/// Middleware: require the requested DNA to be in the session's registered DNAs.
+///
+/// Must be layered AFTER a capability middleware (require_dht_read/write) which
+/// populates AuthContext in request extensions.
+///
+/// Extracts `dna_hash` from axum's path parameters and checks it against the
+/// session's registered DNAs. Returns 403 if the DNA is not in scope.
+pub async fn require_dna_scope(
+    State(_state): State<AppState>,
+    Path(params): Path<HashMap<String, String>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    // Extract AuthContext (set by capability middleware)
+    let Some(auth_ctx) = req.extensions().get::<AuthContext>() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "AuthContext not found — ensure capability middleware runs first",
+        )
+            .into_response();
+    };
+
+    let dna_hash_str = match params.get("dna_hash") {
+        Some(s) => s.as_str(),
+        None => {
+            return (StatusCode::BAD_REQUEST, "Missing DNA hash in path").into_response();
+        }
+    };
+
+    let dna_hash = match DnaHash::try_from(dna_hash_str) {
+        Ok(h) => h,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "Invalid DNA hash in path").into_response();
+        }
+    };
+
+    if !auth_ctx.has_dna(&dna_hash) {
+        return (StatusCode::FORBIDDEN, "Session not authorized for this DNA").into_response();
+    }
 
     next.run(req).await
 }
@@ -102,8 +149,8 @@ mod tests {
     use axum::routing::get;
     use axum::Router;
     use holochain_types::prelude::AgentPubKey;
+    use holochain_types::prelude::DnaHash;
     use std::collections::HashSet;
-    use std::time::Duration;
     use tower::ServiceExt;
 
     fn test_agent(seed: u8) -> AgentPubKey {
@@ -173,12 +220,25 @@ mod tests {
                     require_admin_secret,
                 )),
             )
+            // DNA-scoped route: capability check first, then DNA scope check
+            .route(
+                "/dht/{dna_hash}/record/{hash}",
+                get(dummy_handler)
+                    .route_layer(axum::middleware::from_fn_with_state(
+                        state.clone(),
+                        require_dna_scope,
+                    ))
+                    .route_layer(axum::middleware::from_fn_with_state(
+                        state.clone(),
+                        require_dht_read,
+                    )),
+            )
             .with_state(state)
     }
 
     #[tokio::test]
     async fn test_missing_auth_header_returns_401() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_test_router(state);
 
@@ -197,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_token_returns_401() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_test_router(state);
 
@@ -216,8 +276,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_expired_token_returns_401() {
-        let store = AuthStore::new(Duration::from_millis(1));
+    async fn test_revoked_token_returns_401() {
+        let store = AuthStore::new();
         store
             .add_agent(AllowedAgent {
                 agent_pubkey: test_agent(1),
@@ -227,7 +287,8 @@ mod tests {
             .await;
         let token = store.create_session(&test_agent(1)).await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Revoke the session
+        store.revoke_session(token.as_str()).await;
 
         let state = test_app_state(store);
         let app = build_test_router(state);
@@ -248,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_capability_returns_403() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(AllowedAgent {
                 agent_pubkey: test_agent(1),
@@ -278,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_valid_token_with_correct_capability_passes() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         store
             .add_agent(AllowedAgent {
                 agent_pubkey: test_agent(1),
@@ -307,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_secret_valid() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_test_router(state);
 
@@ -327,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_secret_invalid() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_test_router(state);
 
@@ -347,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_missing_header() {
-        let store = AuthStore::new(Duration::from_secs(3600));
+        let store = AuthStore::new();
         let state = test_app_state(store);
         let app = build_test_router(state);
 
@@ -362,5 +423,68 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_dna_scope_unregistered_dna_returns_403() {
+        let store = AuthStore::new();
+        let dna = DnaHash::from_raw_32(vec![1u8; 32]);
+        store
+            .add_agent(AllowedAgent {
+                agent_pubkey: test_agent(1),
+                capabilities: HashSet::from([Capability::DhtRead]),
+                label: None,
+            })
+            .await;
+        let token = store.create_session(&test_agent(1)).await.unwrap();
+        // Do NOT register any DNA — session has empty registered_dnas
+
+        let state = test_app_state(store);
+        let app = build_test_router(state);
+
+        let resp = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri(&format!("/dht/{}/record/some-hash", dna))
+                    .header("authorization", format!("Bearer {}", token.as_str()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_dna_scope_registered_dna_passes() {
+        let store = AuthStore::new();
+        let dna = DnaHash::from_raw_32(vec![1u8; 32]);
+        store
+            .add_agent(AllowedAgent {
+                agent_pubkey: test_agent(1),
+                capabilities: HashSet::from([Capability::DhtRead]),
+                label: None,
+            })
+            .await;
+        let token = store.create_session(&test_agent(1)).await.unwrap();
+        // Register the DNA for this agent's sessions
+        store.register_dna_for_agent(&test_agent(1), &dna).await;
+
+        let state = test_app_state(store);
+        let app = build_test_router(state);
+
+        let resp = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri(&format!("/dht/{}/record/some-hash", dna))
+                    .header("authorization", format!("Bearer {}", token.as_str()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }
