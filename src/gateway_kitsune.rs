@@ -703,8 +703,9 @@ impl GatewayKitsune {
         let spaces = self.spaces.read().await;
         let mut total = 0usize;
         for space in spaces.values() {
-            if let Ok(peers) = space.peer_store().get_all().await {
-                total += peers.len();
+            match space.peer_store().get_all().await {
+                Ok(peers) => total += peers.len(),
+                Err(e) => tracing::warn!("Failed to query peer store: {e}"),
             }
         }
         total
