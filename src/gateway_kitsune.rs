@@ -698,6 +698,18 @@ impl GatewayKitsune {
         self.spaces.read().await.len()
     }
 
+    /// Get the total number of peers known to kitsune2 across all spaces.
+    pub async fn peer_count(&self) -> usize {
+        let spaces = self.spaces.read().await;
+        let mut total = 0usize;
+        for space in spaces.values() {
+            if let Ok(peers) = space.peer_store().get_all().await {
+                total += peers.len();
+            }
+        }
+        total
+    }
+
     /// Check if an agent is registered in a space.
     ///
     /// # Arguments

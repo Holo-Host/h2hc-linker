@@ -132,8 +132,11 @@ pub enum ServerMessage {
         /// Signal payload (base64 encoded msgpack).
         signal: String,
     },
-    /// Pong response to ping.
-    Pong,
+    /// Pong response to ping. Includes network peer count.
+    Pong {
+        /// Number of peers known to kitsune2 across all spaces.
+        peer_count: usize,
+    },
     /// Error message.
     Error {
         /// Error description.
@@ -487,7 +490,14 @@ async fn handle_client_message(
             })
         }
 
-        ClientMessage::Ping => Some(ServerMessage::Pong),
+        ClientMessage::Ping => {
+            let peer_count = if let Some(ref gw_kitsune) = app_state.gateway_kitsune {
+                gw_kitsune.peer_count().await
+            } else {
+                0
+            };
+            Some(ServerMessage::Pong { peer_count })
+        }
 
         ClientMessage::SignResponse {
             request_id,
@@ -791,9 +801,16 @@ mod tests {
 
     #[test]
     fn test_server_message_pong() {
-        let msg = ServerMessage::Pong;
+        let msg = ServerMessage::Pong { peer_count: 0 };
         let json = serde_json::to_string(&msg).unwrap();
-        assert_eq!(json, r#"{"type":"pong"}"#);
+        assert_eq!(json, r#"{"type":"pong","peer_count":0}"#);
+    }
+
+    #[test]
+    fn test_server_message_pong_with_peers() {
+        let msg = ServerMessage::Pong { peer_count: 42 };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert_eq!(json, r#"{"type":"pong","peer_count":42}"#);
     }
 
     #[test]
