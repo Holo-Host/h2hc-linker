@@ -1,6 +1,6 @@
 [package]
 name = "h2hc-linker"
-version = "0.1.0"
+version = "0.1.1"
 description = "Holo-to-Holochain Linker - Network edge gateway providing DHT access for lightweight clients"
 authors = ["Holochain Community"]
 license = "CAL-1.0"
