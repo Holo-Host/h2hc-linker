@@ -1,10 +1,11 @@
 # Compatibility
 
-This table tracks which versions of h2hc-linker are compatible with which versions of the Holo Web Conductor extension.
+This table tracks which versions of h2hc-linker are compatible with which versions of Holochain and the Holo Web Conductor extension.
 
-| h2hc-linker Version | HWC Version | Notes |
-|---------------------|-------------|-------|
-| v0.1.0              | v0.1.0      | Initial release |
+| h2hc-linker Version | Holochain Version | HWC Version | Notes |
+|---------------------|-------------------|-------------|-------|
+| v0.1.0              | 0.6.1-rc.x | v0.1.0-rc.2 and earlier | Initial release |
+| v0.1.1              | 0.6.1-rc.x       |      v0.1.0-rc.2       |    Includes PeerCount in ping/pong   |
 
 ## Release Process
 
