@@ -1,5 +1,11 @@
 # h2hc-linker
 
+[![CI](https://github.com/Holo-Host/h2hc-linker/actions/workflows/ci.yml/badge.svg)](https://github.com/Holo-Host/h2hc-linker/actions/workflows/ci.yml)
+[![License: CAL-1.0](https://img.shields.io/badge/License-CAL--1.0-blue.svg)](./LICENSE)
+
+> [!WARNING]
+> **Alpha software.** h2hc-linker is under active development. APIs may change between releases. Not yet recommended for production use.
+
 Network edge gateway providing DHT access for lightweight browser clients.
 
 ## Overview
