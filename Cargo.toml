@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Holo-to-Holochain Linker - Network edge gateway providing DHT access for lightweight clients"
 authors = ["Holochain Community"]
 license = "CAL-1.0"
+repository = "https://github.com/Holo-Host/h2hc-linker"
 edition = "2021"
 
 [[bin]]
