@@ -52,23 +52,18 @@ impl Default for HcReportConfig {
     }
 }
 
-/// Generate a random ed25519 signing key.
-///
-/// Uses `ed25519_dalek`'s expected `rand_core` 0.6 `OsRng` to avoid
-/// version conflicts with the project's `rand` 0.9 crate.
+/// Generate a random ed25519 signing key (used in tests).
+#[cfg(test)]
 fn generate_signing_key() -> SigningKey {
-    // ed25519-dalek 2.x depends on rand_core 0.6, while our rand crate
-    // is 0.9 (rand_core 0.9). Generate random bytes directly and construct
-    // the signing key from them.
     let secret: [u8; 32] = rand::random();
     SigningKey::from_bytes(&secret)
 }
 
 /// Factory for creating [`LinkerReport`] instances.
 ///
-/// Implements the kitsune2 `ReportFactory` trait. Generates a dedicated
-/// ed25519 signing keypair so report entries can be cryptographically
-/// signed without a lair keystore.
+/// Implements the kitsune2 `ReportFactory` trait. Uses the linker's
+/// persistent ed25519 keypair (from [`crate::identity::LinkerIdentity`])
+/// for signing report entries.
 pub struct LinkerReportFactory {
     signing_key: SigningKey,
 }
@@ -80,9 +75,11 @@ impl std::fmt::Debug for LinkerReportFactory {
 }
 
 impl LinkerReportFactory {
-    /// Construct a new [`LinkerReportFactory`] with a random signing keypair.
-    pub fn create() -> DynReportFactory {
-        let signing_key = generate_signing_key();
+    /// Construct a new [`LinkerReportFactory`] with the given signing key.
+    ///
+    /// The signing key should come from [`crate::identity::LinkerIdentity`]
+    /// so that reports and registration share the same identity.
+    pub fn create(signing_key: SigningKey) -> DynReportFactory {
         let out: DynReportFactory = Arc::new(Self { signing_key });
         out
     }
@@ -317,7 +314,8 @@ mod tests {
 
     #[test]
     fn test_linker_report_factory_creates() {
-        let factory = LinkerReportFactory::create();
+        let signing_key = generate_signing_key();
+        let factory = LinkerReportFactory::create(signing_key);
         assert!(format!("{factory:?}").contains("LinkerReportFactory"));
     }
 

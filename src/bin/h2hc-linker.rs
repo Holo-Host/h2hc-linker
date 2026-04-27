@@ -41,13 +41,47 @@ async fn main() -> anyhow::Result<()> {
         address = %args.address,
         port = %args.port,
         kitsune_enabled = config.kitsune_enabled(),
+        registration_enabled = config.registration_enabled(),
         "Starting h2hc-linker"
     );
 
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
     let service = LinkerService::new(args.address, args.port, config).await?;
-    service.run().await?;
+
+    // Set up shutdown signal handler (ctrl-c + SIGTERM)
+    let shutdown_task = tokio::spawn(async move {
+        shutdown_signal().await;
+        tracing::info!("Shutdown signal received");
+        let _ = shutdown_tx.send(true);
+    });
+
+    service.run(shutdown_rx).await?;
+
+    // Clean up the signal handler task
+    shutdown_task.abort();
 
     Ok(())
+}
+
+/// Wait for either ctrl-c or SIGTERM (on Unix).
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+    }
 }
 
 fn initialize_tracing() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
