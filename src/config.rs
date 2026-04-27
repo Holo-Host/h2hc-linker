@@ -38,6 +38,14 @@ pub enum ReportConfig {
 }
 
 /// Configuration for joining-service registration (opt-in).
+///
+/// Note: `admin_url` (the URL the joining service uses to call back into
+/// this linker's admin API) is derived from `public_url` by swapping the
+/// scheme (`wss://` -> `https://`, `ws://` -> `http://`). This bakes in
+/// the assumption that the WS interface and the admin HTTP interface
+/// share host and port -- which is true for the current single-axum-server
+/// deployment. A future split-port deployment would need an explicit
+/// admin_url field here.
 #[derive(Debug, Clone)]
 pub struct RegistrationConfig {
     /// Joining service base URL.
@@ -46,7 +54,9 @@ pub struct RegistrationConfig {
     pub invite_token: Option<String>,
     /// Externally-reachable WSS URL for this linker.
     pub public_url: String,
-    /// Initial heartbeat interval in seconds (before server responds).
+    /// Initial heartbeat interval in seconds. Replaced by the
+    /// `heartbeat_interval_seconds` from the server response after the
+    /// first successful heartbeat.
     pub initial_heartbeat_interval_secs: u64,
 }
 
@@ -234,6 +244,28 @@ impl Configuration {
 
         match (&joining_service_url, &public_url) {
             (Some(js_url), Some(pub_url)) => {
+                // Validate URLs at config load so misconfiguration surfaces
+                // at startup rather than as a server-side rejection.
+                let parsed_js = url::Url::parse(js_url).map_err(|e| {
+                    anyhow::anyhow!("H2HC_LINKER_JOINING_SERVICE_URL is not a valid URL: {e}")
+                })?;
+                if !matches!(parsed_js.scheme(), "http" | "https") {
+                    return Err(anyhow::anyhow!(
+                        "H2HC_LINKER_JOINING_SERVICE_URL must use http:// or https:// scheme, got: {}",
+                        parsed_js.scheme()
+                    ));
+                }
+
+                let parsed_pub = url::Url::parse(pub_url).map_err(|e| {
+                    anyhow::anyhow!("H2HC_LINKER_PUBLIC_URL is not a valid URL: {e}")
+                })?;
+                if !matches!(parsed_pub.scheme(), "ws" | "wss" | "http" | "https") {
+                    return Err(anyhow::anyhow!(
+                        "H2HC_LINKER_PUBLIC_URL must use ws://, wss://, http://, or https:// scheme, got: {}",
+                        parsed_pub.scheme()
+                    ));
+                }
+
                 let interval: u64 = std::env::var("H2HC_LINKER_HEARTBEAT_INTERVAL_SECS")
                     .ok()
                     .and_then(|v| v.parse().ok())

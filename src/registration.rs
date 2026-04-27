@@ -10,7 +10,6 @@
 use base64::Engine;
 use ed25519_dalek::Signer;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,7 +22,11 @@ pub struct RegistrationClient {
     config: RegistrationConfig,
     admin_secret: String,
     http: reqwest::Client,
-    is_registered: AtomicBool,
+    /// True after a successful heartbeat. Reset to false on any heartbeat
+    /// failure so the next attempt re-sends `admin_secret` and the invite,
+    /// which lets us recover if the joining service has lost our entry
+    /// (TTL expiry during a long outage, server restart, operator delete).
+    is_registered: bool,
     shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
@@ -61,7 +64,7 @@ impl RegistrationClient {
             config,
             admin_secret,
             http,
-            is_registered: AtomicBool::new(false),
+            is_registered: false,
             shutdown,
         }
     }
@@ -71,9 +74,10 @@ impl RegistrationClient {
         let mut interval_secs = self.config.initial_heartbeat_interval_secs;
 
         loop {
+            let was_registered = self.is_registered;
             match self.send_heartbeat().await {
                 Ok(resp) => {
-                    if !self.is_registered.swap(true, Ordering::Relaxed) {
+                    if !was_registered {
                         tracing::info!(
                             ttl_seconds = resp.ttl_seconds,
                             "Registered with joining service"
@@ -123,12 +127,31 @@ impl RegistrationClient {
     }
 
     /// Send a heartbeat to the joining service.
-    async fn send_heartbeat(&self) -> anyhow::Result<HeartbeatResponse> {
+    ///
+    /// Updates `self.is_registered` based on the result:
+    /// - On success: set to `true` so subsequent heartbeats omit `admin_secret`.
+    /// - On any error: reset to `false` so the next attempt re-sends
+    ///   `admin_secret`. This is how we recover from server-side eviction
+    ///   (TTL expiry during a long outage, server restart, operator delete).
+    async fn send_heartbeat(&mut self) -> anyhow::Result<HeartbeatResponse> {
+        match self.send_heartbeat_inner().await {
+            Ok(resp) => {
+                self.is_registered = true;
+                Ok(resp)
+            }
+            Err(e) => {
+                self.is_registered = false;
+                Err(e)
+            }
+        }
+    }
+
+    async fn send_heartbeat_inner(&self) -> anyhow::Result<HeartbeatResponse> {
         let pubkey = self.identity.public_key_base64();
         let linker_url = &self.config.public_url;
         let admin_url = self.config.admin_url();
-        let timestamp = chrono_now_iso();
-        let is_first = !self.is_registered.load(Ordering::Relaxed);
+        let timestamp = now_iso();
+        let is_first = !self.is_registered;
 
         // Build the canonical JSON fields for signing
         let signature = if is_first {
@@ -174,6 +197,8 @@ impl RegistrationClient {
                 serde_json::Value::String(self.admin_secret.clone()),
             );
         }
+        // Secret rotation is not yet supported on the linker side;
+        // the operator must restart the linker with a new admin_secret.
         body.insert("rotate_secret".into(), serde_json::Value::Bool(false));
         body.insert("timestamp".into(), serde_json::Value::String(timestamp));
         body.insert("signature".into(), serde_json::Value::String(signature));
@@ -208,7 +233,7 @@ impl RegistrationClient {
     /// Send a deregistration request (best-effort).
     async fn deregister(&self) -> anyhow::Result<()> {
         let pubkey = self.identity.public_key_base64();
-        let timestamp = chrono_now_iso();
+        let timestamp = now_iso();
         let signature = sign_canonical(
             self.identity.signing_key(),
             &[("pubkey", &pubkey), ("timestamp", &timestamp)],
@@ -243,11 +268,11 @@ impl RegistrationClient {
     }
 }
 
-/// Build canonical JSON from pre-sorted key-value pairs and sign it.
+/// Build canonical JSON from key-value pairs and sign it.
 ///
-/// The fields must be provided in alphabetical order (the caller is
-/// responsible for this). The result is a standard base64-encoded
-/// ed25519 signature.
+/// Returns a standard base64-encoded ed25519 signature. The fields are
+/// sorted by key inside `canonical_json`, so the input order does not
+/// matter.
 fn sign_canonical(key: &ed25519_dalek::SigningKey, fields: &[(&str, &str)]) -> String {
     let canonical = canonical_json(fields);
     let signature = key.sign(canonical.as_bytes());
@@ -275,50 +300,17 @@ fn url_encode_path_segment(s: &str) -> String {
 
 /// Produce canonical JSON: a JSON object with the given key-value pairs.
 ///
-/// Fields must be passed in alphabetical order. The output has no
-/// extraneous whitespace and matches the joining service's
-/// `canonicalJson()` in `verify.ts`.
+/// Keys are sorted alphabetically (via `BTreeMap`), with no extraneous
+/// whitespace. Output matches the joining service's `canonicalJson()`
+/// in `verify.ts`.
 fn canonical_json(fields: &[(&str, &str)]) -> String {
     let map: BTreeMap<&str, &str> = fields.iter().copied().collect();
     serde_json::to_string(&map).expect("BTreeMap<&str, &str> serialization cannot fail")
 }
 
-/// Current UTC time as ISO 8601 with milliseconds (matching JS `toISOString()`).
-fn chrono_now_iso() -> String {
-    // Format: 2026-03-31T12:00:00.000Z
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch");
-    let secs = now.as_secs();
-    let millis = now.subsec_millis();
-
-    // Convert to date-time components
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-
-    // Days since epoch to year-month-day (simplified Gregorian)
-    let (year, month, day) = days_to_ymd(days);
-
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z")
-}
-
-/// Convert days since Unix epoch to (year, month, day).
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
+/// Current UTC time as ISO 8601 with milliseconds (matches JS `toISOString()`).
+fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 #[cfg(test)]
@@ -327,6 +319,7 @@ mod tests {
     use axum::response::IntoResponse;
     use axum::routing::post;
     use ed25519_dalek::Verifier;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
 
     #[test]
@@ -365,8 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn test_chrono_now_iso_format() {
-        let ts = chrono_now_iso();
+    fn test_now_iso_format() {
+        let ts = now_iso();
         // Should match: YYYY-MM-DDTHH:MM:SS.mmmZ
         assert!(ts.ends_with('Z'), "timestamp should end with Z: {ts}");
         assert_eq!(ts.len(), 24, "timestamp should be 24 chars: {ts}");
@@ -379,16 +372,27 @@ mod tests {
     }
 
     #[test]
-    fn test_days_to_ymd_epoch() {
-        let (y, m, d) = days_to_ymd(0);
-        assert_eq!((y, m, d), (1970, 1, 1));
-    }
+    fn test_admin_url_derivation() {
+        let cfg = RegistrationConfig {
+            joining_service_url: "http://js".into(),
+            invite_token: None,
+            public_url: "wss://host:8090".into(),
+            initial_heartbeat_interval_secs: 200,
+        };
+        assert_eq!(cfg.admin_url(), "https://host:8090");
 
-    #[test]
-    fn test_days_to_ymd_known_date() {
-        // 2026-04-06 = day 20549
-        let (y, m, d) = days_to_ymd(20549);
-        assert_eq!((y, m, d), (2026, 4, 6));
+        let cfg = RegistrationConfig {
+            public_url: "ws://host:8090".into(),
+            ..cfg.clone()
+        };
+        assert_eq!(cfg.admin_url(), "http://host:8090");
+
+        // Already http(s) — passthrough
+        let cfg = RegistrationConfig {
+            public_url: "https://host:8090".into(),
+            ..cfg.clone()
+        };
+        assert_eq!(cfg.admin_url(), "https://host:8090");
     }
 
     // -- Integration tests with mock joining service --
@@ -470,7 +474,7 @@ mod tests {
         let config = test_config(addr);
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let client =
+        let mut client =
             RegistrationClient::new(identity, config, "test-admin-secret".into(), shutdown_rx);
 
         let resp = client.send_heartbeat().await.unwrap();
@@ -493,17 +497,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_subsequent_heartbeat_omits_secret() {
-        let call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let received = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
         let received2 = received.clone();
-        let call_count2 = call_count.clone();
 
         let handler = post(move |body: axum::Json<serde_json::Value>| {
             let received = received2.clone();
-            let call_count = call_count2.clone();
             async move {
                 received.lock().unwrap().push(body.0);
-                call_count.fetch_add(1, Ordering::Relaxed);
                 axum::Json(serde_json::json!({
                     "registered": true,
                     "ttl_seconds": 600
@@ -516,13 +516,11 @@ mod tests {
         let config = test_config(addr);
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let client =
+        let mut client =
             RegistrationClient::new(identity, config, "test-admin-secret".into(), shutdown_rx);
 
-        // First heartbeat
+        // First heartbeat -- send_heartbeat updates is_registered itself
         client.send_heartbeat().await.unwrap();
-        client.is_registered.store(true, Ordering::Relaxed);
-
         // Second heartbeat
         client.send_heartbeat().await.unwrap();
 
@@ -560,13 +558,9 @@ mod tests {
         let config = test_config(addr);
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
+        let mut client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
 
-        // First heartbeat
         client.send_heartbeat().await.unwrap();
-        client.is_registered.store(true, Ordering::Relaxed);
-
-        // Second heartbeat
         client.send_heartbeat().await.unwrap();
 
         let bodies = received.lock().unwrap();
@@ -604,7 +598,7 @@ mod tests {
 
         let config = test_config(addr);
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
-        let client = RegistrationClient::new(identity, config, "my-secret".into(), shutdown_rx);
+        let mut client = RegistrationClient::new(identity, config, "my-secret".into(), shutdown_rx);
 
         client.send_heartbeat().await.unwrap();
 
@@ -633,7 +627,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_heartbeat_retries_on_failure() {
-        let call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let call_count = Arc::new(AtomicU32::new(0));
         let call_count2 = call_count.clone();
 
         let handler = post(move || {
@@ -662,7 +656,7 @@ mod tests {
         let identity = test_identity();
         let config = test_config(addr);
         let (_, shutdown_rx) = tokio::sync::watch::channel(false);
-        let client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
+        let mut client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
 
         // First call should fail
         assert!(client.send_heartbeat().await.is_err());
@@ -673,34 +667,144 @@ mod tests {
         assert_eq!(call_count.load(Ordering::Relaxed), 2);
     }
 
+    /// Eviction recovery: if a heartbeat fails (network error, server lost
+    /// our entry, etc.) the next attempt must re-send `admin_secret` and
+    /// the invite so the joining service can re-register us.
     #[tokio::test]
-    async fn test_server_interval_respected() {
-        let handler = post(|| async {
-            axum::Json(serde_json::json!({
-                "registered": true,
-                "ttl_seconds": 300,
-                "heartbeat_interval_seconds": 100
-            }))
+    async fn test_heartbeat_recovers_after_failure_with_admin_secret() {
+        let received = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let call_count = Arc::new(AtomicU32::new(0));
+        let received2 = received.clone();
+        let call_count2 = call_count.clone();
+
+        // Sequence: success, success (server lost us, returns 400), success
+        let handler = post(move |body: axum::Json<serde_json::Value>| {
+            let received = received2.clone();
+            let call_count = call_count2.clone();
+            async move {
+                let n = call_count.fetch_add(1, Ordering::Relaxed);
+                received.lock().unwrap().push(body.0);
+                if n == 1 {
+                    // Simulate server-side eviction: it doesn't know us
+                    (axum::http::StatusCode::BAD_REQUEST, "not_registered").into_response()
+                } else {
+                    axum::Json(serde_json::json!({
+                        "registered": true,
+                        "ttl_seconds": 600
+                    }))
+                    .into_response()
+                }
+            }
         });
 
         let (addr, _server) = start_mock_server(handler).await;
         let identity = test_identity();
         let config = test_config(addr);
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let mut client = RegistrationClient::new(identity, config, "my-secret".into(), shutdown_rx);
+
+        // 1st: succeeds, registers
+        client.send_heartbeat().await.unwrap();
+        assert!(client.is_registered);
+        // 2nd: 400, is_registered must reset
+        assert!(client.send_heartbeat().await.is_err());
+        assert!(
+            !client.is_registered,
+            "is_registered must reset on heartbeat failure for eviction recovery"
+        );
+        // 3rd: succeeds again as a "first" heartbeat (with admin_secret)
+        client.send_heartbeat().await.unwrap();
+
+        let bodies = received.lock().unwrap();
+        assert_eq!(bodies.len(), 3);
+        assert!(bodies[0]["admin_secret"].is_string(), "1st has secret");
+        assert!(
+            bodies[1].get("admin_secret").is_none(),
+            "2nd is a renewal (no secret) -- this is the heartbeat the server rejects"
+        );
+        assert!(
+            bodies[2]["admin_secret"].is_string(),
+            "3rd must re-send admin_secret to recover from server-side eviction"
+        );
+    }
+
+    /// 4xx error pinning: the linker treats it like any other failure
+    /// and retries (via the run() loop's retry path). This pins current
+    /// behavior; no exponential backoff or permanent-failure detection.
+    #[tokio::test]
+    async fn test_heartbeat_4xx_returns_error_and_resets_state() {
+        let handler = post(|| async {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                "invalid_signature".to_string(),
+            )
+                .into_response()
+        });
+
+        let (addr, _server) = start_mock_server(handler).await;
+        let identity = test_identity();
+        let config = test_config(addr);
+        let (_, shutdown_rx) = tokio::sync::watch::channel(false);
+        let mut client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
+
+        let err = client.send_heartbeat().await.unwrap_err();
+        assert!(
+            err.to_string().contains("400"),
+            "error should mention 400, got: {err}"
+        );
+        assert!(!client.is_registered);
+    }
+
+    /// Server-directed interval is respected: assert the second heartbeat
+    /// fires after the server's interval, not the client's initial 200s.
+    /// Server returns interval=1s; if the client used its initial value
+    /// the second heartbeat would not arrive within the test window.
+    #[tokio::test]
+    async fn test_server_interval_respected() {
+        let call_count = Arc::new(AtomicU32::new(0));
+        let call_count2 = call_count.clone();
+
+        let handler = post(move || {
+            let call_count = call_count2.clone();
+            async move {
+                call_count.fetch_add(1, Ordering::Relaxed);
+                axum::Json(serde_json::json!({
+                    "registered": true,
+                    "ttl_seconds": 60,
+                    "heartbeat_interval_seconds": 1
+                }))
+            }
+        });
+
+        let (addr, _server) = start_mock_server(handler).await;
+        let identity = test_identity();
+        // initial_heartbeat_interval_secs = 60: if the client ignored the
+        // server-directed interval, only the first heartbeat would fire
+        // within the test window.
+        let config = RegistrationConfig {
+            joining_service_url: format!("http://{addr}"),
+            invite_token: Some("lnk_test_token".into()),
+            public_url: "wss://test-linker.example.com:8090".into(),
+            initial_heartbeat_interval_secs: 60,
+        };
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
 
-        // Run the loop briefly -- it should do one heartbeat then wait
-        // for the server-directed interval. We shut down quickly and
-        // just verify the heartbeat succeeded.
         let handle = tokio::spawn(async move {
             client.run().await;
         });
 
-        // Give it time to send one heartbeat
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Allow time for first heartbeat + server-directed 1s sleep + second heartbeat
+        tokio::time::sleep(Duration::from_millis(2500)).await;
         let _ = shutdown_tx.send(true);
         let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+
+        let n = call_count.load(Ordering::Relaxed);
+        assert!(
+            n >= 2,
+            "expected at least 2 heartbeats (server interval respected), got {n}"
+        );
     }
 
     #[tokio::test]
