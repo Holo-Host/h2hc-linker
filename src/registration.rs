@@ -70,164 +70,182 @@ impl RegistrationClient {
     }
 
     /// Run the heartbeat loop. Blocks until shutdown is signalled.
+    ///
+    /// Both the heartbeat call and the inter-heartbeat sleep race against
+    /// the shutdown signal, so a hung heartbeat (waiting on reqwest's 30s
+    /// timeout, for example) does not delay shutdown.
     pub async fn run(mut self) {
+        // Clone the shutdown receiver so we can borrow it independently of
+        // `&mut self.send_heartbeat()` in tokio::select! arms.
+        let mut shutdown = self.shutdown.clone();
         let mut interval_secs = self.config.initial_heartbeat_interval_secs;
 
         loop {
             let was_registered = self.is_registered;
-            match self.send_heartbeat().await {
-                Ok(resp) => {
-                    if !was_registered {
-                        tracing::info!(
-                            ttl_seconds = resp.ttl_seconds,
-                            "Registered with joining service"
-                        );
-                    } else {
-                        tracing::debug!(ttl_seconds = resp.ttl_seconds, "Heartbeat renewed");
-                    }
-                    // Use server-directed interval if provided
-                    if let Some(server_interval) = resp.heartbeat_interval_seconds {
-                        if server_interval > 0 {
-                            interval_secs = server_interval;
+
+            // Race the heartbeat against shutdown so a hung HTTP request
+            // doesn't block exit until the reqwest timeout.
+            tokio::select! {
+                result = self.send_heartbeat() => match result {
+                    Ok(resp) => {
+                        if !was_registered {
+                            tracing::info!(
+                                ttl_seconds = resp.ttl_seconds,
+                                "Registered with joining service"
+                            );
+                        } else {
+                            tracing::debug!(ttl_seconds = resp.ttl_seconds, "Heartbeat renewed");
+                        }
+                        // Use server-directed interval if provided
+                        if let Some(server_interval) = resp.heartbeat_interval_seconds {
+                            if server_interval > 0 {
+                                interval_secs = server_interval;
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Heartbeat failed, retrying in 30s"
-                    );
-                    interval_secs = 30;
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Heartbeat failed, retrying in 30s");
+                        interval_secs = 30;
+                    }
+                },
+                _ = shutdown.changed() => {
+                    self.handle_shutdown().await;
+                    return;
                 }
             }
 
+            // Race the inter-heartbeat sleep against shutdown.
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(interval_secs)) => {
-                    // Reset to configured interval on next success (send_heartbeat will set it)
-                }
-                _ = self.shutdown.changed() => {
-                    tracing::info!("Shutdown signal received, deregistering");
-                    match tokio::time::timeout(
-                        Duration::from_secs(3),
-                        self.deregister(),
-                    ).await {
-                        Ok(Ok(())) => tracing::info!("Deregistered from joining service"),
-                        Ok(Err(e)) => tracing::warn!(
-                            error = %e,
-                            "Deregistration failed (best-effort), entry will expire via TTL"
-                        ),
-                        Err(_) => tracing::warn!(
-                            "Deregistration timed out (best-effort), entry will expire via TTL"
-                        ),
-                    }
+                _ = tokio::time::sleep(Duration::from_secs(interval_secs)) => {}
+                _ = shutdown.changed() => {
+                    self.handle_shutdown().await;
                     return;
                 }
             }
         }
     }
 
+    /// Best-effort deregistration on shutdown. Skipped if no heartbeat has
+    /// ever succeeded (nothing to deregister).
+    async fn handle_shutdown(&self) {
+        if !self.is_registered {
+            tracing::info!(
+                "Shutdown received before any successful heartbeat, skipping deregister"
+            );
+            return;
+        }
+        tracing::info!("Shutdown signal received, deregistering");
+        match tokio::time::timeout(Duration::from_secs(3), self.deregister()).await {
+            Ok(Ok(())) => tracing::info!("Deregistered from joining service"),
+            Ok(Err(e)) => tracing::warn!(
+                error = %e,
+                "Deregistration failed (best-effort), entry will expire via TTL"
+            ),
+            Err(_) => {
+                tracing::warn!("Deregistration timed out (best-effort), entry will expire via TTL")
+            }
+        }
+    }
+
     /// Send a heartbeat to the joining service.
     ///
-    /// Updates `self.is_registered` based on the result:
+    /// Snapshots `is_registered` at the top to compute `is_first`, then
+    /// writes the new state at the bottom based on the result:
     /// - On success: set to `true` so subsequent heartbeats omit `admin_secret`.
     /// - On any error: reset to `false` so the next attempt re-sends
     ///   `admin_secret`. This is how we recover from server-side eviction
     ///   (TTL expiry during a long outage, server restart, operator delete).
     async fn send_heartbeat(&mut self) -> anyhow::Result<HeartbeatResponse> {
-        match self.send_heartbeat_inner().await {
-            Ok(resp) => {
-                self.is_registered = true;
-                Ok(resp)
-            }
-            Err(e) => {
-                self.is_registered = false;
-                Err(e)
-            }
-        }
-    }
-
-    async fn send_heartbeat_inner(&self) -> anyhow::Result<HeartbeatResponse> {
-        let pubkey = self.identity.public_key_base64();
-        let linker_url = &self.config.public_url;
-        let admin_url = self.config.admin_url();
-        let timestamp = now_iso();
         let is_first = !self.is_registered;
 
-        // Build the canonical JSON fields for signing
-        let signature = if is_first {
-            sign_canonical(
-                self.identity.signing_key(),
-                &[
-                    ("admin_secret", &self.admin_secret),
-                    ("admin_url", &admin_url),
-                    ("linker_url", linker_url),
-                    ("pubkey", &pubkey),
-                    ("timestamp", &timestamp),
-                ],
-            )
-        } else {
-            sign_canonical(
-                self.identity.signing_key(),
-                &[
-                    ("admin_url", &admin_url),
-                    ("linker_url", linker_url),
-                    ("pubkey", &pubkey),
-                    ("timestamp", &timestamp),
-                ],
-            )
-        };
+        // Inner async block so `?` short-circuits inside while we still
+        // unconditionally update `is_registered` at the bottom of this fn.
+        let result: anyhow::Result<HeartbeatResponse> = async {
+            let pubkey = self.identity.public_key_base64();
+            let linker_url = &self.config.public_url;
+            let admin_url = self.config.admin_url();
+            let timestamp = now_iso();
 
-        // Build the request body
-        let mut body = serde_json::Map::new();
-        body.insert("pubkey".into(), serde_json::Value::String(pubkey));
-        if let Some(ref token) = self.config.invite_token {
+            // Build the canonical JSON fields for signing
+            let signature = if is_first {
+                sign_canonical(
+                    self.identity.signing_key(),
+                    &[
+                        ("admin_secret", &self.admin_secret),
+                        ("admin_url", &admin_url),
+                        ("linker_url", linker_url),
+                        ("pubkey", &pubkey),
+                        ("timestamp", &timestamp),
+                    ],
+                )
+            } else {
+                sign_canonical(
+                    self.identity.signing_key(),
+                    &[
+                        ("admin_url", &admin_url),
+                        ("linker_url", linker_url),
+                        ("pubkey", &pubkey),
+                        ("timestamp", &timestamp),
+                    ],
+                )
+            };
+
+            // Build the request body
+            let mut body = serde_json::Map::new();
+            body.insert("pubkey".into(), serde_json::Value::String(pubkey));
+            if let Some(ref token) = self.config.invite_token {
+                body.insert(
+                    "invite_token".into(),
+                    serde_json::Value::String(token.clone()),
+                );
+            }
             body.insert(
-                "invite_token".into(),
-                serde_json::Value::String(token.clone()),
+                "linker_url".into(),
+                serde_json::Value::String(linker_url.clone()),
             );
+            body.insert("admin_url".into(), serde_json::Value::String(admin_url));
+            if is_first {
+                body.insert(
+                    "admin_secret".into(),
+                    serde_json::Value::String(self.admin_secret.clone()),
+                );
+            }
+            // Secret rotation is not yet supported on the linker side;
+            // the operator must restart the linker with a new admin_secret.
+            body.insert("rotate_secret".into(), serde_json::Value::Bool(false));
+            body.insert("timestamp".into(), serde_json::Value::String(timestamp));
+            body.insert("signature".into(), serde_json::Value::String(signature));
+
+            let url = format!("{}/v1/linkers/heartbeat", self.config.joining_service_url);
+            let resp = self
+                .http
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Heartbeat request failed: {e}"))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!("Heartbeat rejected: {status} {text}"));
+            }
+
+            let heartbeat_resp: HeartbeatResponse = resp
+                .json()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to parse heartbeat response: {e}"))?;
+
+            if !heartbeat_resp.registered {
+                return Err(anyhow::anyhow!("Heartbeat response: registered=false"));
+            }
+
+            Ok(heartbeat_resp)
         }
-        body.insert(
-            "linker_url".into(),
-            serde_json::Value::String(linker_url.clone()),
-        );
-        body.insert("admin_url".into(), serde_json::Value::String(admin_url));
-        if is_first {
-            body.insert(
-                "admin_secret".into(),
-                serde_json::Value::String(self.admin_secret.clone()),
-            );
-        }
-        // Secret rotation is not yet supported on the linker side;
-        // the operator must restart the linker with a new admin_secret.
-        body.insert("rotate_secret".into(), serde_json::Value::Bool(false));
-        body.insert("timestamp".into(), serde_json::Value::String(timestamp));
-        body.insert("signature".into(), serde_json::Value::String(signature));
+        .await;
 
-        let url = format!("{}/v1/linkers/heartbeat", self.config.joining_service_url);
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Heartbeat request failed: {e}"))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Heartbeat rejected: {status} {text}"));
-        }
-
-        let heartbeat_resp: HeartbeatResponse = resp
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse heartbeat response: {e}"))?;
-
-        if !heartbeat_resp.registered {
-            return Err(anyhow::anyhow!("Heartbeat response: registered=false"));
-        }
-
-        Ok(heartbeat_resp)
+        self.is_registered = result.is_ok();
+        result
     }
 
     /// Send a deregistration request (best-effort).
@@ -804,6 +822,45 @@ mod tests {
         assert!(
             n >= 2,
             "expected at least 2 heartbeats (server interval respected), got {n}"
+        );
+    }
+
+    /// A hung heartbeat (server never responds) must not delay shutdown
+    /// until reqwest's 30s timeout.
+    #[tokio::test]
+    async fn test_shutdown_during_hung_heartbeat_exits_promptly() {
+        let handler = post(|| async {
+            // Never responds
+            std::future::pending::<()>().await;
+            // Unreachable, but give axum a concrete return type
+            axum::http::StatusCode::OK
+        });
+
+        let (addr, _server) = start_mock_server(handler).await;
+        let identity = test_identity();
+        let config = test_config(addr);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let client = RegistrationClient::new(identity, config, "secret".into(), shutdown_rx);
+
+        let handle = tokio::spawn(async move {
+            client.run().await;
+        });
+
+        // Let the heartbeat begin and start waiting for a response
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let start = std::time::Instant::now();
+        let _ = shutdown_tx.send(true);
+        // run() should exit quickly even though the heartbeat is hung;
+        // 2s is generous and well under reqwest's 30s default.
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("run() should exit promptly even during a hung heartbeat")
+            .expect("run() task should not panic");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "shutdown took too long: {elapsed:?}"
         );
     }
 
