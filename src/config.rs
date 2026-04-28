@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::identity::IdentityConfig;
+
 /// How session/agent state is persisted.
 #[derive(Debug, Clone, Default)]
 pub enum SessionStoreConfig {
@@ -33,6 +35,46 @@ pub enum ReportConfig {
         /// How often to report Fetched-Op aggregated data in seconds.
         fetched_op_interval_s: u32,
     },
+}
+
+/// Configuration for joining-service registration (opt-in).
+///
+/// Note: `admin_url` (the URL the joining service uses to call back into
+/// this linker's admin API) is derived from `public_url` by swapping the
+/// scheme (`wss://` -> `https://`, `ws://` -> `http://`). This bakes in
+/// the assumption that the WS interface and the admin HTTP interface
+/// share host and port -- which is true for the current single-axum-server
+/// deployment. A future split-port deployment would need an explicit
+/// admin_url field here.
+#[derive(Debug, Clone)]
+pub struct RegistrationConfig {
+    /// Joining service base URL.
+    pub joining_service_url: String,
+    /// Invite token from the joining service operator.
+    pub invite_token: Option<String>,
+    /// Externally-reachable WSS URL for this linker.
+    pub public_url: String,
+    /// Initial heartbeat interval in seconds. Replaced by the
+    /// `heartbeat_interval_seconds` from the server response after the
+    /// first successful heartbeat.
+    pub initial_heartbeat_interval_secs: u64,
+}
+
+impl RegistrationConfig {
+    /// Derive the admin URL from the public URL by swapping the scheme.
+    ///
+    /// `wss://host:port` -> `https://host:port`
+    /// `ws://host:port`  -> `http://host:port`
+    pub fn admin_url(&self) -> String {
+        if self.public_url.starts_with("wss://") {
+            self.public_url.replacen("wss://", "https://", 1)
+        } else if self.public_url.starts_with("ws://") {
+            self.public_url.replacen("ws://", "http://", 1)
+        } else {
+            // Already http(s), use as-is
+            self.public_url.clone()
+        }
+    }
 }
 
 /// Default timeout for zome calls
@@ -92,6 +134,12 @@ pub struct Configuration {
 
     /// Directory path for report files (from H2HC_LINKER_REPORT_PATH)
     pub report_path: PathBuf,
+
+    /// Identity configuration for the persistent keypair.
+    pub identity: IdentityConfig,
+
+    /// Registration configuration (None = registration disabled).
+    pub registration: Option<RegistrationConfig>,
 }
 
 impl Default for Configuration {
@@ -107,6 +155,8 @@ impl Default for Configuration {
             session_store: SessionStoreConfig::default(),
             report: ReportConfig::None,
             report_path: PathBuf::from("/tmp/h2hc-linker-reports"),
+            identity: IdentityConfig::default(),
+            registration: None,
         }
     }
 }
@@ -175,9 +225,72 @@ impl Configuration {
             config.report_path = PathBuf::from(path);
         }
 
+        // Identity configuration
+        if let Ok(path) = std::env::var("H2HC_LINKER_KEY_FILE") {
+            config.identity.key_file = PathBuf::from(path);
+        }
+        if let Ok(key) = std::env::var("H2HC_LINKER_PRIVATE_KEY") {
+            config.identity.private_key_base64 = Some(key);
+        }
+
         // Auth configuration
         if let Ok(secret) = std::env::var("H2HC_LINKER_ADMIN_SECRET") {
             config.admin_secret = Some(secret);
+        }
+
+        // Registration configuration (opt-in)
+        let joining_service_url = std::env::var("H2HC_LINKER_JOINING_SERVICE_URL").ok();
+        let public_url = std::env::var("H2HC_LINKER_PUBLIC_URL").ok();
+
+        match (&joining_service_url, &public_url) {
+            (Some(js_url), Some(pub_url)) => {
+                // Validate URLs at config load so misconfiguration surfaces
+                // at startup rather than as a server-side rejection.
+                let parsed_js = url::Url::parse(js_url).map_err(|e| {
+                    anyhow::anyhow!("H2HC_LINKER_JOINING_SERVICE_URL is not a valid URL: {e}")
+                })?;
+                if !matches!(parsed_js.scheme(), "http" | "https") {
+                    return Err(anyhow::anyhow!(
+                        "H2HC_LINKER_JOINING_SERVICE_URL must use http:// or https:// scheme, got: {}",
+                        parsed_js.scheme()
+                    ));
+                }
+
+                let parsed_pub = url::Url::parse(pub_url).map_err(|e| {
+                    anyhow::anyhow!("H2HC_LINKER_PUBLIC_URL is not a valid URL: {e}")
+                })?;
+                if !matches!(parsed_pub.scheme(), "ws" | "wss" | "http" | "https") {
+                    return Err(anyhow::anyhow!(
+                        "H2HC_LINKER_PUBLIC_URL must use ws://, wss://, http://, or https:// scheme, got: {}",
+                        parsed_pub.scheme()
+                    ));
+                }
+
+                let interval: u64 = std::env::var("H2HC_LINKER_HEARTBEAT_INTERVAL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(200);
+
+                config.registration = Some(RegistrationConfig {
+                    joining_service_url: js_url.clone(),
+                    invite_token: std::env::var("H2HC_LINKER_INVITE_TOKEN").ok(),
+                    public_url: pub_url.clone(),
+                    initial_heartbeat_interval_secs: interval,
+                });
+            }
+            (Some(_), None) => {
+                return Err(anyhow::anyhow!(
+                    "H2HC_LINKER_JOINING_SERVICE_URL is set but H2HC_LINKER_PUBLIC_URL is missing. \
+                     Both are required for registration."
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(anyhow::anyhow!(
+                    "H2HC_LINKER_PUBLIC_URL is set but H2HC_LINKER_JOINING_SERVICE_URL is missing. \
+                     Both are required for registration."
+                ));
+            }
+            (None, None) => {} // Registration disabled
         }
 
         // Session store backend
@@ -216,6 +329,11 @@ impl Configuration {
     /// Check if authentication is enabled (admin secret is set)
     pub fn auth_enabled(&self) -> bool {
         self.admin_secret.is_some()
+    }
+
+    /// Check if registration with a joining service is configured.
+    pub fn registration_enabled(&self) -> bool {
+        self.registration.is_some()
     }
 }
 

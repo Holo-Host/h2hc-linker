@@ -11,6 +11,8 @@ use crate::config::Configuration;
 use crate::dht_query::{DhtQuery, PendingDhtResponses};
 use crate::error::{LinkerError, LinkerResult};
 use crate::gateway_kitsune::{GatewayKitsune, KitsuneProxy, KitsuneProxyBuilder};
+use crate::identity::LinkerIdentity;
+use crate::registration::RegistrationClient;
 use crate::router::create_router;
 use crate::routes::kitsune::KitsuneState;
 use crate::temp_op_store::{TempOpStoreFactory, TempOpStoreHandle};
@@ -40,12 +42,27 @@ pub struct AppState {
 pub struct LinkerService {
     addr: SocketAddr,
     app_state: AppState,
+    identity: Arc<LinkerIdentity>,
 }
 
 impl LinkerService {
     /// Create a new service with the given configuration
     pub async fn new(address: IpAddr, port: u16, config: Configuration) -> LinkerResult<Self> {
         let addr = SocketAddr::new(address, port);
+
+        // Load or generate the linker identity (persistent ed25519 keypair)
+        let identity =
+            Arc::new(LinkerIdentity::load(&config.identity).map_err(|e| {
+                LinkerError::Internal(format!("Failed to load linker identity: {e}"))
+            })?);
+
+        // Warn if registration is configured but admin_secret is not set
+        if config.registration_enabled() && config.admin_secret.is_none() {
+            tracing::warn!(
+                "Registration is configured but H2HC_LINKER_ADMIN_SECRET is not set. \
+                 The joining service will not be able to call back to this linker's admin API."
+            );
+        }
 
         // Create agent proxy manager
         let agent_proxy = AgentProxyManager::new();
@@ -75,7 +92,7 @@ impl LinkerService {
                 builder = builder.with_relay_url(relay_url);
             }
 
-            // Configure reporting if enabled
+            // Configure reporting if enabled (uses the persistent identity)
             if let crate::config::ReportConfig::JsonLines {
                 days_retained,
                 fetched_op_interval_s,
@@ -87,7 +104,9 @@ impl LinkerService {
                     path = %config.report_path.display(),
                     "Enabling kitsune2 reporting (JsonLines)"
                 );
-                let report_factory = crate::linker_report::LinkerReportFactory::create();
+                let report_factory = crate::linker_report::LinkerReportFactory::create(
+                    identity.signing_key().clone(),
+                );
                 let report_config = crate::linker_report::HcReportConfig {
                     days_retained: *days_retained,
                     path: config.report_path.clone(),
@@ -181,12 +200,53 @@ impl LinkerService {
             auth_store,
         };
 
-        Ok(Self { addr, app_state })
+        Ok(Self {
+            addr,
+            app_state,
+            identity,
+        })
     }
 
-    /// Run the service
-    pub async fn run(self) -> LinkerResult<()> {
-        let router = create_router(self.app_state);
+    /// Run the service, including registration heartbeat loop if configured.
+    ///
+    /// The `shutdown_rx` channel is used to coordinate graceful shutdown:
+    /// when `true` is sent, both axum and the registration client will stop.
+    pub async fn run(
+        self,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> LinkerResult<()> {
+        let router = create_router(self.app_state.clone());
+
+        // Start registration heartbeat loop if configured
+        let registration_handle =
+            if let Some(ref reg_config) = self.app_state.configuration.registration {
+                let admin_secret = self
+                    .app_state
+                    .configuration
+                    .admin_secret
+                    .clone()
+                    .unwrap_or_default();
+
+                let client = RegistrationClient::new(
+                    self.identity.clone(),
+                    reg_config.clone(),
+                    admin_secret,
+                    shutdown_rx.clone(),
+                );
+
+                tracing::info!(
+                    joining_service = %reg_config.joining_service_url,
+                    public_url = %reg_config.public_url,
+                    "Starting registration heartbeat loop"
+                );
+
+                Some(tokio::spawn(async move {
+                    client.run().await;
+                }))
+            } else {
+                tracing::info!("Registration not configured (no H2HC_LINKER_JOINING_SERVICE_URL)");
+                None
+            };
 
         tracing::info!("Starting h2hc-linker on {}", self.addr);
 
@@ -194,9 +254,24 @@ impl LinkerService {
             .await
             .map_err(|e| crate::error::LinkerError::Network(e.to_string()))?;
 
+        // Serve with graceful shutdown
+        let shutdown_signal = async move {
+            let _ = shutdown_rx.wait_for(|v| *v).await;
+        };
+
         axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal)
             .await
             .map_err(|e| crate::error::LinkerError::Network(e.to_string()))?;
+
+        // Wait for registration deregistration (with timeout)
+        if let Some(handle) = registration_handle {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => tracing::debug!("Registration task completed"),
+                Ok(Err(e)) => tracing::warn!(error = %e, "Registration task panicked"),
+                Err(_) => tracing::warn!("Registration shutdown timed out after 5s"),
+            }
+        }
 
         Ok(())
     }
