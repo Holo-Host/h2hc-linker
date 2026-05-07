@@ -13,7 +13,7 @@ use crate::error::{LinkerError, LinkerResult};
 use crate::service::AppState;
 
 // For direct DHT queries
-use holo_hash::HashableContentExtSync;
+use holo_hash::{HasHash, HashableContentExtSync};
 use holochain_types::link::WireLinkKey;
 use holochain_types::prelude::{Action, CreateLink, LinkTag, LinkTypeFilter};
 use holochain_zome_types::link::Link;
@@ -423,11 +423,18 @@ pub async fn dht_must_get_agent_activity(
 ///
 /// WireOps are the condensed wire protocol format. This function reconstructs the full
 /// Record (signed_action + entry) that Holochain returns from get calls.
-/// Returns null if the WireOps variant doesn't contain a record or has no action.
+///
+/// Both WireOps::Record (returned by action-keyed gets) and WireOps::Entry (returned
+/// by entry-keyed gets) carry enough information to reconstruct a Record. Holochain's
+/// `get(EntryHash)` selects a creating action for the entry and returns a Record built
+/// from it; we mirror that selection logic locally for the Entry variant.
+///
+/// Returns null for the Warrant variant, or if the variant carries no usable record.
 fn wire_ops_to_record_json(ops: &WireOps) -> serde_json::Value {
     match ops {
         WireOps::Record(record_ops) => wire_record_ops_to_record(record_ops),
-        WireOps::Entry(_) | WireOps::Warrant(_) => serde_json::Value::Null,
+        WireOps::Entry(entry_ops) => wire_entry_ops_to_record(entry_ops),
+        WireOps::Warrant(_) => serde_json::Value::Null,
     }
 }
 
@@ -452,6 +459,84 @@ fn wire_record_ops_to_record(record_ops: &WireRecordOps) -> serde_json::Value {
     let record = Record::new(signed_action_hashed, record_ops.entry.clone());
 
     serde_json::to_value(&record).unwrap_or(serde_json::Value::Null)
+}
+
+/// Convert WireEntryOps to a flat Record JSON.
+///
+/// Holochain's `get(EntryHash)` returns a Record for an entry by selecting one of
+/// its creating actions (Create or Update); peers reply with WireOps::Entry rather
+/// than WireOps::Record because the request key is an entry hash. We pick the first
+/// valid create whose action has not been tombstoned by an entry-delete. If every
+/// create has been deleted (or none are valid), we return null — matching what
+/// Holochain returns for a fully-deleted entry on a default `get`.
+fn wire_entry_ops_to_record(entry_ops: &WireEntryOps) -> serde_json::Value {
+    let entry_data = match &entry_ops.entry {
+        Some(ed) => ed,
+        None => return serde_json::Value::Null,
+    };
+
+    let entry_type = entry_data.entry_type.clone();
+    // Peers ship a single entry payload; the entry hash is implicit in the
+    // request key but must be re-derived for the Action we reconstruct.
+    let entry_hash = EntryHash::with_data_sync(&entry_data.entry);
+
+    // Set of action hashes that have been tombstoned. Each WireDelete in
+    // entry_ops.deletes carries the original Delete action, whose
+    // `deletes_address` is the action hash of the create being deleted.
+    let deleted_action_hashes: std::collections::HashSet<ActionHash> = entry_ops
+        .deletes
+        .iter()
+        .map(|d| d.data.delete.deletes_address.clone())
+        .collect();
+
+    for judged_create in &entry_ops.creates {
+        let is_valid = judged_create
+            .status
+            .map(|s| s == ValidationStatus::Valid)
+            .unwrap_or(true);
+        if !is_valid {
+            continue;
+        }
+
+        let (full_action, signature) = match &judged_create.data {
+            WireNewEntryAction::Create(wire_create) => {
+                let create = holochain_zome_types::action::Create {
+                    author: wire_create.author.clone(),
+                    timestamp: wire_create.timestamp,
+                    action_seq: wire_create.action_seq,
+                    prev_action: wire_create.prev_action.clone(),
+                    entry_type: entry_type.clone(),
+                    entry_hash: entry_hash.clone(),
+                    weight: wire_create.weight.clone(),
+                };
+                (Action::Create(create), wire_create.signature.clone())
+            }
+            WireNewEntryAction::Update(wire_update) => {
+                let update = holochain_zome_types::action::Update {
+                    author: wire_update.author.clone(),
+                    timestamp: wire_update.timestamp,
+                    action_seq: wire_update.action_seq,
+                    prev_action: wire_update.prev_action.clone(),
+                    original_entry_address: wire_update.original_entry_address.clone(),
+                    original_action_address: wire_update.original_action_address.clone(),
+                    entry_type: entry_type.clone(),
+                    entry_hash: entry_hash.clone(),
+                    weight: wire_update.weight.clone(),
+                };
+                (Action::Update(update), wire_update.signature.clone())
+            }
+        };
+
+        let action_hashed = ActionHashed::from_content_sync(full_action);
+        if deleted_action_hashes.contains(action_hashed.as_hash()) {
+            continue;
+        }
+        let signed_action_hashed = SignedActionHashed::with_presigned(action_hashed, signature);
+        let record = Record::new(signed_action_hashed, Some(entry_data.entry.clone()));
+        return serde_json::to_value(&record).unwrap_or(serde_json::Value::Null);
+    }
+
+    serde_json::Value::Null
 }
 
 /// Convert WireOps to the Details JSON format matching Holochain's get_details return type.
@@ -667,11 +752,24 @@ fn wire_entry_ops_to_details(entry_ops: &WireEntryOps) -> serde_json::Value {
 ///
 /// This converts the wire protocol format to the same format that the conductor
 /// returns, ensuring consistency.
+///
+/// # Tombstone-pair filtering happens in the HWC extension, not here.
+///
+/// `WireLinkOps.deletes` is deliberately ignored when building the response. The
+/// HWC extension keeps a `{create, deleteHashes[]}` map keyed by base in
+/// `packages/core/src/network/cache.ts` (see `mergeLinkDetailIntoCache` and
+/// `addDeleteToLinkDetailsCache`) and derives the live link set on the client
+/// side via `details.filter(d => d.deleteHashes.length === 0)` (covered by
+/// `cascade-link-details.test.ts`). If we filtered here the extension would
+/// have no way to learn about remote deletes via this endpoint, breaking that
+/// contract. The full create+delete pairing is exposed via
+/// `/dht/{dna}/details/{base}`, which `wire_entry_ops_to_details` populates.
 fn wire_link_ops_to_links(
     ops: &holochain_types::link::WireLinkOps,
     base: &AnyLinkableHash,
     query_tag: Option<&LinkTag>,
 ) -> Vec<Link> {
+    // Pass-through: deletes deliberately not applied — see function docstring.
     ops.creates
         .iter()
         .map(|wire_create| {
@@ -735,9 +833,10 @@ mod tests {
     use holochain_zome_types::judged::Judged;
 
     use super::{
-        wire_entry_ops_to_details, wire_ops_to_details_json, wire_ops_to_record_json,
-        wire_record_ops_to_details, wire_record_ops_to_record,
+        wire_entry_ops_to_details, wire_link_ops_to_links, wire_ops_to_details_json,
+        wire_ops_to_record_json, wire_record_ops_to_details, wire_record_ops_to_record,
     };
+    use holo_hash::HashableContentExtSync;
 
     fn test_agent() -> AgentPubKey {
         AgentPubKey::from_raw_32(vec![1; 32])
@@ -973,25 +1072,137 @@ mod tests {
         assert!(result.is_null());
     }
 
+    /// Compute the action_hash that wire_entry_ops_to_record reconstructs for
+    /// `test_wire_create()` paired with `test_entry()` — needed when wiring up a
+    /// matching WireDelete in delete-filtering tests. Mirrors the reconstruction
+    /// the production code does (entry_hash is re-derived from the entry data).
+    fn expected_create_action_hash() -> ActionHash {
+        let wc = test_wire_create();
+        let entry_hash = EntryHash::with_data_sync(&test_entry());
+        let create = Create {
+            author: wc.author,
+            timestamp: wc.timestamp,
+            action_seq: wc.action_seq,
+            prev_action: wc.prev_action,
+            entry_type: test_entry_type(),
+            entry_hash,
+            weight: wc.weight,
+        };
+        Action::Create(create).to_hash()
+    }
+
+    fn test_wire_delete_targeting_create() -> WireDelete {
+        let target = expected_create_action_hash();
+        let real_entry_hash = EntryHash::with_data_sync(&test_entry());
+        WireDelete {
+            delete: Delete {
+                author: test_agent(),
+                timestamp: Timestamp::from_micros(2_000_000),
+                action_seq: 6,
+                prev_action: test_action_hash(),
+                deletes_address: target,
+                deletes_entry_address: real_entry_hash,
+                weight: RateWeight::default(),
+            },
+            signature: Signature::from([0xbb; 64]),
+        }
+    }
+
     #[test]
-    fn test_wire_ops_to_record_json_entry_variant_returns_null() {
+    fn test_wire_ops_to_record_json_entry_variant_reconstructs_record() {
         let entry_data = EntryData {
             entry: test_entry(),
             entry_type: test_entry_type(),
         };
-
         let entry_ops = WireEntryOps {
-            creates: vec![Judged::valid(
-                WireNewEntryAction::Create(test_wire_create()),
-            )],
+            creates: vec![Judged::valid(WireNewEntryAction::Create(test_wire_create()))],
             deletes: vec![],
             updates: vec![],
             entry: Some(entry_data),
         };
 
-        // Entry variant should return null from the record endpoint
         let result = wire_ops_to_record_json(&WireOps::Entry(entry_ops));
-        assert!(result.is_null());
+        let obj = result
+            .as_object()
+            .expect("entry-keyed get should reconstruct a Record JSON object");
+        assert!(
+            obj.contains_key("signed_action"),
+            "Record JSON must have signed_action field, got keys: {:?}",
+            obj.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            obj.contains_key("entry"),
+            "Record JSON must have entry field"
+        );
+
+        // The signed_action must carry both the hashed action and a signature.
+        let sa = &obj["signed_action"];
+        assert!(sa["hashed"]["content"].is_object());
+        assert!(sa["hashed"]["hash"].is_array());
+        assert!(sa["signature"].is_array());
+    }
+
+    #[test]
+    fn test_wire_ops_to_record_json_entry_variant_no_entry_returns_null() {
+        // No entry data => nothing to reconstruct.
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(WireNewEntryAction::Create(test_wire_create()))],
+            deletes: vec![],
+            updates: vec![],
+            entry: None,
+        };
+        let result = wire_ops_to_record_json(&WireOps::Entry(entry_ops));
+        assert!(
+            result.is_null(),
+            "Entry variant with no entry payload must return null"
+        );
+    }
+
+    #[test]
+    fn test_wire_ops_to_record_json_entry_variant_all_creates_deleted_returns_null() {
+        // The single create has been tombstoned by an entry-delete pointing
+        // at its action hash; treat the entry as not-found, matching
+        // holochain's `get` semantics for a fully-deleted entry.
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::valid(WireNewEntryAction::Create(test_wire_create()))],
+            deletes: vec![Judged::valid(test_wire_delete_targeting_create())],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+        let result = wire_ops_to_record_json(&WireOps::Entry(entry_ops));
+        assert!(
+            result.is_null(),
+            "fully-deleted entry must return null, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_wire_ops_to_record_json_entry_variant_skips_invalid_creates() {
+        // Only a rejected create exists — the response should be null
+        // since holochain treats rejected creates as not-yet-valid sources
+        // for the entry.
+        let entry_data = EntryData {
+            entry: test_entry(),
+            entry_type: test_entry_type(),
+        };
+        let entry_ops = WireEntryOps {
+            creates: vec![Judged::new(
+                WireNewEntryAction::Create(test_wire_create()),
+                ValidationStatus::Rejected,
+            )],
+            deletes: vec![],
+            updates: vec![],
+            entry: Some(entry_data),
+        };
+        let result = wire_ops_to_record_json(&WireOps::Entry(entry_ops));
+        assert!(
+            result.is_null(),
+            "rejected-only creates must return null, got: {result}"
+        );
     }
 
     #[test]
@@ -1247,5 +1458,99 @@ mod tests {
 
         let result = wire_ops_to_details_json(&WireOps::Entry(entry_ops));
         assert_eq!(result["type"], "Entry");
+    }
+
+    // ========================================================================
+    // wire_link_ops_to_links tests
+    // ========================================================================
+
+    fn test_wire_create_link(fill: u8, tag_bytes: Vec<u8>) -> WireCreateLink {
+        WireCreateLink {
+            author: test_agent(),
+            timestamp: Timestamp::from_micros(1_000_000 + fill as i64),
+            action_seq: 5 + fill as u32,
+            prev_action: ActionHash::from_raw_32(vec![10 + fill; 32]),
+            target_address: AnyLinkableHash::from(EntryHash::from_raw_32(vec![20 + fill; 32])),
+            zome_index: 0.into(),
+            link_type: 0.into(),
+            tag: Some(LinkTag::new(tag_bytes)),
+            signature: Signature::from([0xaa; 64]),
+            validation_status: ValidationStatus::Valid,
+            weight: RateWeight::default(),
+        }
+    }
+
+    /// Compute the action_hash that wire_link_ops_to_links would assign to a
+    /// given WireCreateLink under a specific base — needed when constructing
+    /// a matching WireDeleteLink for tests.
+    fn expected_create_link_action_hash(
+        wc: &WireCreateLink,
+        base: &AnyLinkableHash,
+    ) -> ActionHash {
+        let create_link = CreateLink {
+            author: wc.author.clone(),
+            timestamp: wc.timestamp,
+            action_seq: wc.action_seq,
+            prev_action: wc.prev_action.clone(),
+            base_address: base.clone(),
+            target_address: wc.target_address.clone(),
+            zome_index: wc.zome_index,
+            link_type: wc.link_type,
+            tag: wc.tag.clone().unwrap_or_else(|| LinkTag::new(Vec::new())),
+            weight: wc.weight.clone(),
+        };
+        Action::CreateLink(create_link).to_hash()
+    }
+
+    #[test]
+    fn test_wire_link_ops_to_links_basic() {
+        let base = AnyLinkableHash::from(EntryHash::from_raw_32(vec![1; 32]));
+        let create = test_wire_create_link(0, vec![0xde, 0xad]);
+
+        let ops = WireLinkOps {
+            creates: vec![create.clone()],
+            deletes: vec![],
+        };
+
+        let links = wire_link_ops_to_links(&ops, &base, None);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, create.target_address);
+        assert_eq!(links[0].tag, create.tag.unwrap());
+    }
+
+    /// Tombstone-paired create-links must be passed through unchanged. The HWC
+    /// extension's link-details cache (packages/core/src/network/cache.ts)
+    /// owns the create-vs-delete pairing and derives the live set on the
+    /// client side. Filtering here would break that contract — so
+    /// wire_link_ops_to_links must NOT drop creates whose action hash
+    /// appears in `deletes[].link_add_address`.
+    #[test]
+    fn test_wire_link_ops_to_links_passes_through_creates_with_matching_deletes() {
+        let base = AnyLinkableHash::from(EntryHash::from_raw_32(vec![1; 32]));
+        let create_kept = test_wire_create_link(0, vec![0xaa]);
+        let create_tombstoned = test_wire_create_link(1, vec![0xbb]);
+        let tombstone_target = expected_create_link_action_hash(&create_tombstoned, &base);
+
+        let delete = WireDeleteLink {
+            author: test_agent(),
+            timestamp: Timestamp::from_micros(2_000_000),
+            action_seq: 10,
+            prev_action: test_action_hash(),
+            link_add_address: tombstone_target,
+            signature: Signature::from([0xcc; 64]),
+            validation_status: ValidationStatus::Valid,
+        };
+
+        let ops = WireLinkOps {
+            creates: vec![create_kept, create_tombstoned],
+            deletes: vec![delete],
+        };
+
+        let links = wire_link_ops_to_links(&ops, &base, None);
+        assert_eq!(
+            links.len(),
+            2,
+            "linker must pass both creates through; the extension's link-details cache filters deletes"
+        );
     }
 }
